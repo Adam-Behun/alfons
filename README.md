@@ -1,6 +1,6 @@
 # Alfons: Prior Authorization Bot
 
-Alfons is a real-world prior authorization bot for healthcare, enabling phone-based conversations, real-time database updates, and a web interface to view live logs. It showcases advanced data engineering and conversational AI skills, built with modern tools for a GitHub portfolio.
+Alfons is a real-world prior authorization bot for healthcare, enabling phone-based conversations, real-time database updates, and a web interface to view live logs.
 
 ## Features
 - **Telephony**: Make/receive calls via Twilio with a testable phone number.
