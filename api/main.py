@@ -2,10 +2,10 @@ import sys
 import os
 from fastapi import FastAPI, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from api.telephony import make_call
-from api.conversation import process_message
-from api.speech import transcribe_audio, synthesize_speech
-from api.database import log_conversation, get_logs
+from .telephony import make_call
+from .conversation import process_message
+from .speech import transcribe_audio, synthesize_speech
+from .database import log_conversation, get_logs
 from twilio.twiml.voice_response import VoiceResponse
 
 app = FastAPI()

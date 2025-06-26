@@ -7,16 +7,20 @@
     "start": "next start"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.7.2",
     "next": "^14.2.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "axios": "^1.7.2",
-    "@supabase/supabase-js": "^2.45.4",
     "tailwindcss": "^3.4.3"
   },
   "env": {
     "NEXT_PUBLIC_SUPABASE_URL": "https://aasfwtdlodiovajqruhm.supabase.co",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhc2Z3dGRsb2Rpb3ZhanFydWhtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA5NjE1MzksImV4cCI6MjA2NjUzNzUzOX0.Gj11ym33PjES4FhmJmbkYDtn6NJ7hjlINj4rEagHDAE",
     "NEXT_PUBLIC_API_URL": "https://alfons-api.vercel.app"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.8.3"
   }
 }

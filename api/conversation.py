@@ -1,4 +1,4 @@
-from langchain_community.llms import xAI
+from langchain_xai import ChatXAI
 from langchain.prompts import PromptTemplate
 from pydantic import BaseModel
 import os
@@ -12,7 +12,7 @@ class AuthorizationData(BaseModel):
     insurance: str = None
 
 async def process_message(text: str) -> tuple[str, dict]:
-    llm = xAI(api_key=os.getenv("XAI_API_KEY"))
+    llm = ChatXAI(api_key=os.getenv("XAI_API_KEY"))
     prompt = PromptTemplate(
         input_variables=["text"],
         template="""
