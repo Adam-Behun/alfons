@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "main.py",
+      "use": "@vercel/python",
+      "config": { "installCommand": "pip3.12 install --disable-pip-version-check --target . --upgrade -r requirements.txt --use-deprecated=legacy-resolver" }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/main.py"
+    }
+  ]
+}
