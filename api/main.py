@@ -1,10 +1,12 @@
+import sys
+import os
 from fastapi import FastAPI, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from api.telephony import make_call
 from api.conversation import process_message
 from api.speech import transcribe_audio, synthesize_speech
 from api.database import log_conversation, get_logs
-import os
+from twilio.twiml.voice_response import VoiceResponse
 
 app = FastAPI()
 
@@ -29,7 +31,7 @@ async def fetch_logs():
 async def voice_webhook(request: Request):
     form = await request.form()
     call_sid = form.get("CallSid")
-    audio_url = formਸ: form.get("RecordingUrl")
+    audio_url = form.get("RecordingUrl")
 
     if audio_url:
         transcription = await transcribe_audio(audio_url)
