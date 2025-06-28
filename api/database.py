@@ -1,12 +1,34 @@
-from supabase import create_client, Client
+"""
+database.py
+
+Module manages all interactions with the Supabase database for the Alfons backend.
+It provides functions to log conversations and retrieve conversation logs.
+
+Environment variables required:
+- SUPABASE_URL: The Supabase project URL
+- SUPABASE_KEY: The Supabase service role or anon key
+
+Table used:
+- conversations: Stores call and conversation details
+"""
+
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+from supabase import create_client, Client
 
 load_dotenv()
+# Create a Supabase client instance using environment variables
 supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-async def log_conversation(call_sid: str, user_input: str, bot_response: str, extracted_data: dict, escalated: bool = False):
+async def log_conversation(
+        # sample data points to collect during the conversation
+        call_sid: str, 
+        user_input: str, 
+        bot_response: str, 
+        extracted_data: dict, 
+        escalated: bool = False
+):
     data = {
         "call_sid": call_sid,
         "user_input": user_input,
@@ -17,6 +39,8 @@ async def log_conversation(call_sid: str, user_input: str, bot_response: str, ex
         "escalated": escalated,
         "timestamp": datetime.utcnow().isoformat()
     }
+    
+    # Insert the conversation data into the 'conversations' table
     supabase.table("conversations").insert(data).execute()
 
 async def get_logs():
