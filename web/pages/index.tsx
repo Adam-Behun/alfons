@@ -8,7 +8,12 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 export default function Home() {
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState<any[]>([]);
+
+  const fetchLogs = async () => {
+    const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/logs`);
+    setLogs(response.data);
+  };
 
   useEffect(() => {
     fetchLogs();
@@ -24,14 +29,15 @@ export default function Home() {
     };
   }, []);
 
-  const fetchLogs = async () => {
-    const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/logs`);
-    setLogs(response.data);
-  };
-
   const triggerCall = async () => {
-    await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/trigger-call`, { phone_number: phoneNumber });
-    alert('Call triggered!');
+    const formData = new FormData();
+    formData.append('phone_number', phoneNumber);
+
+    await axios.post(
+      `${process.env.NEXT_PUBLIC_API_URL}/trigger-call`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
   };
 
   return (

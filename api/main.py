@@ -29,13 +29,19 @@ async def fetch_logs():
 
 @app.post("/voice")
 async def voice_webhook(request: Request):
+    print("Received /voice webhook")
     form = await request.form()
+    print("Form data:", form)
     call_sid = form.get("CallSid")
     audio_url = form.get("RecordingUrl")
+    print("CallSid:", call_sid, "RecordingUrl:", audio_url)
 
     if audio_url:
+        print("Processing audio_url")
         transcription = await transcribe_audio(audio_url)
+        print("Transcription:", transcription)
         response_text, extracted_data = await process_message(transcription)
+        print("Response:", response_text, "Extracted data:", extracted_data)
         if "escalate" in response_text.lower():
             twiml = VoiceResponse()
             twiml.dial(os.getenv("HUMAN_ESCALATION_NUMBER"))
@@ -47,6 +53,7 @@ async def voice_webhook(request: Request):
             await log_conversation(call_sid, transcription, response_text, extracted_data)
         return str(twiml)
     else:
+        print("No audio_url, sending welcome message")
         twiml = VoiceResponse()
         twiml.say("Welcome to Alfons, your prior authorization assistant. Please provide patient details.")
         twiml.record(max_length=30, action="/voice")
