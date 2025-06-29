@@ -1,15 +1,22 @@
+// Main frontend page for the application
+// Integrates with Supabase for real-time updates and FastAPI backend for call logic
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { createClient } from '@supabase/supabase-js'
 
+// Initialize Supabase client with environment variables
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY!
 const supabase = createClient(supabaseUrl, supabaseKey)
 
+
 export default function Home() {
+
+  // State variables for phone number input and conversation logs
   const [phoneNumber, setPhoneNumber] = useState('');
   const [logs, setLogs] = useState<any[]>([]);
 
+  // Fetch conversation logs from the backend API
   const fetchLogs = async () => {
     const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/logs`);
     setLogs(response.data);
