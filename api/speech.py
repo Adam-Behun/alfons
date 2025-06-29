@@ -1,8 +1,25 @@
+"""
+speech.py
+
+Module handles speech-to-text and text-to-speech operations using the ElevenLabs API
+for the Alfons backend.
+
+https://elevenlabs.io/docs/api-reference/introduction
+Environment variables required:
+- ELEVENLABS_API_KEY: API key for ElevenLabs
+- BASE_URL: The public URL where generated audio files can be accessed
+
+Functions:
+- transcribe_audio: Converts audio at a given URL to text using ElevenLabs
+- synthesize_speech: Converts text to speech, saves the audio, and returns a public URL
+"""
+
 import requests
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 async def transcribe_audio(audio_url: str) -> str:
     url = "https://api.elevenlabs.io/v1/speech-to-text"
@@ -10,6 +27,7 @@ async def transcribe_audio(audio_url: str) -> str:
     data = {"audio_url": audio_url}
     response = requests.post(url, headers=headers, json=data)
     return response.json()["transcript"]
+
 
 async def synthesize_speech(text: str) -> str:
     url = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDQ8ikWAm"

@@ -4,6 +4,8 @@ database.py
 Module manages all interactions with the Supabase database for the Alfons backend.
 It provides functions to log conversations and retrieve conversation logs.
 
+https://supabase.com/docs
+
 Environment variables required:
 - SUPABASE_URL: The Supabase project URL
 - SUPABASE_KEY: The Supabase service role or anon key
