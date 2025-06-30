@@ -7,3 +7,4 @@ node_modules/
 .next/
 static/output.mp3
 conversation_logs.csv
+notes.txt
