@@ -1,41 +1,63 @@
-// Main frontend page for the application
-// Integrates with Supabase for real-time updates and FastAPI backend for call logic
+/**
+ * index.tsx
+ *
+ * This is the main frontend page for the Alfons Prior Authorization Bot.
+ * It allows users to trigger outbound calls and view conversation logs.
+ * Integrates with Supabase for real-time updates and a FastAPI backend for call logic.
+ */
+
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Supabase client with environment variables
+// Initialize Supabase client using environment variables
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY!
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-
 export default function Home() {
-
-  // State variables for phone number input and conversation logs
+  // State for the phone number input and conversation logs
   const [phoneNumber, setPhoneNumber] = useState('');
   const [logs, setLogs] = useState<any[]>([]);
 
-  // Fetch conversation logs from the backend API
+  /**
+   * Fetches conversation logs from the backend API and updates state.
+   */
   const fetchLogs = async () => {
     const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/logs`);
     setLogs(response.data);
   };
 
+  /**
+   * useEffect runs once on mount:
+   * - Fetches initial logs.
+   * - Subscribes to Supabase real-time updates for the 'conversations' table.
+   * - Cleans up the subscription on unmount.
+   */
   useEffect(() => {
     fetchLogs();
+    // Subscribe to all changes in the 'conversations' table
     const subscription = supabase
       .channel('conversations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, (payload) => {
-        fetchLogs();
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'conversations' },
+        (payload) => {
+          fetchLogs(); // Refresh logs on any change
+        }
+      )
       .subscribe();
 
+    // Cleanup: remove the subscription when the component unmounts
     return () => {
       supabase.removeChannel(subscription);
     };
   }, []);
 
+  /**
+   * Sends a POST request to the backend to trigger a phone call.
+   * The phone number is sent as form data.
+   */
   const triggerCall = async () => {
     const formData = new FormData();
     formData.append('phone_number', phoneNumber);
@@ -51,6 +73,8 @@ export default function Home() {
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Alfons: Prior Authorization Bot</h1>
       <div className="mb-4">
+        
+        {/* Input for the phone number to call */}
         <input
           type="text"
           value={phoneNumber}
@@ -58,6 +82,8 @@ export default function Home() {
           placeholder="Enter phone number (e.g., +1234567890)"
           className="p-2 border rounded"
         />
+
+        {/* Button to trigger the call */}
         <button
           onClick={triggerCall}
           className="ml-2 bg-blue-500 text-white p-2 rounded"
@@ -66,6 +92,8 @@ export default function Home() {
         </button>
       </div>
       <h2 className="text-xl font-bold">Conversation Logs</h2>
+
+      {/* Table displaying conversation logs */}
       <table className="w-full border">
         <thead>
           <tr>
@@ -80,6 +108,8 @@ export default function Home() {
           </tr>
         </thead>
         <tbody>
+
+          {/* Render each log entry as a table row */}
           {logs.map((log: any) => (
             <tr key={log.id}>
               <td className="border p-2">{log.call_sid}</td>
