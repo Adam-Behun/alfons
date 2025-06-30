@@ -62,11 +62,18 @@ export default function Home() {
     const formData = new FormData();
     formData.append('phone_number', phoneNumber);
 
-    await axios.post(
-      `${process.env.NEXT_PUBLIC_API_URL}/trigger-call`,
-      formData,
-      { headers: { 'Content-Type': 'multipart/form-data' } }
-    );
+    try {
+      await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/trigger-call`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      // Show a success message or clear the input
+    } catch (error) {
+      // Log the error for debugging
+      console.error('Error triggering call:', error);
+      alert('Failed to trigger call. Please check your backend connection.');
+    }
   };
 
   return (

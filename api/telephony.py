@@ -20,6 +20,9 @@ from twilio.twiml.voice_response import VoiceResponse
 # Load environment variables from .env file
 load_dotenv()
 
+# Print all environment variables for debugging
+print("ALL ENV:", dict(os.environ))
+
 # Initialize Twilio client with account SID and auth token
 client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
 
@@ -31,6 +34,8 @@ def make_call(phone_number: str) -> str:
     Returns:
         str: The SID of the initiated call.
     """
+    print("DEBUG: phone_number received:", phone_number)
+    print("Twilio call URL:", f"{os.getenv('BASE_URL')}/voice")
     call = client.calls.create(
         to=phone_number,
         from_=os.getenv("TWILIO_PHONE_NUMBER"),
