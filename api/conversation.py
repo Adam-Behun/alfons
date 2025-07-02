@@ -12,7 +12,10 @@ class AuthorizationData(BaseModel):
     insurance: str = None
 
 async def process_message(text: str) -> tuple[str, dict]:
-    llm = ChatXAI(api_key=os.getenv("XAI_API_KEY"))
+    llm = ChatXAI(
+        api_key=os.getenv("XAI_API_KEY"),
+        model="grok-3-mini"
+    )
     prompt = PromptTemplate(
         input_variables=["text"],
         template="""

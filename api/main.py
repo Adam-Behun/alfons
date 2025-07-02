@@ -22,13 +22,14 @@ import sys
 import os
 from fastapi import FastAPI, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from twilio.twiml.voice_response import VoiceResponse
 
 # import local modules
 from .telephony import make_call
 from .conversation import process_message
 from .speech import transcribe_audio, synthesize_speech
 from .database import log_conversation, get_logs
-from twilio.twiml.voice_response import VoiceResponse
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -67,25 +68,33 @@ async def voice_webhook(request: Request):
     audio_url = form.get("RecordingUrl")
 
     if audio_url:
-        # If a recording is present, transcribe it and process the message
-        transcription = await transcribe_audio(audio_url)
-        response_text, extracted_data = await process_message(transcription)
-        
-        if "escalate" in response_text.lower():
-            # Escalate to a human  using number set in environment variable
+        try:
+            # If a recording is present, transcribe it and process the message
+            transcription = await transcribe_audio(audio_url)
+            response_text, extracted_data = await process_message(transcription)
+            
+            if "escalate" in response_text.lower():
+                # Escalate to a human  using number set in environment variable
+                twiml = VoiceResponse()
+                twiml.dial(os.getenv("HUMAN_ESCALATION_NUMBER"))
+                await log_conversation(call_sid, transcription, response_text, extracted_data, escalated=True)
+            else:
+                # If not escalating, synthesize the response and play it back
+                speech_url = await synthesize_speech(response_text)
+                twiml = VoiceResponse()
+                twiml.play(speech_url)
+                await log_conversation(call_sid, transcription, response_text, extracted_data)
+            return str(twiml)
+        except Exception as e:
+            print("Error in /voice:", e)
             twiml = VoiceResponse()
-            twiml.dial(os.getenv("HUMAN_ESCALATION_NUMBER"))
-            await log_conversation(call_sid, transcription, response_text, extracted_data, escalated=True)
-        else:
-            # If not escalating, synthesize the response and play it back
-            speech_url = await synthesize_speech(response_text)
-            twiml = VoiceResponse()
-            twiml.play(speech_url)
-            await log_conversation(call_sid, transcription, response_text, extracted_data)
-        return str(twiml)
+            twiml.say("Sorry, there was an error processing your request. Please try again.")
+            return Response(content=str(twiml), media_type="application/xml")
     else:
         # If no recording, prompt the caller for input
         twiml = VoiceResponse()
         twiml.say("Welcome to Alfons, your prior authorization assistant. Please provide patient details.")
-        twiml.record(max_length=30, action="/voice")
-        return str(twiml)
+        # Use the full public URL for action
+        action_url = f"{os.getenv('BASE_URL')}/voice"
+        twiml.record(action=action_url, maxLength="30")
+        return Response(content=str(twiml), media_type="application/xml")

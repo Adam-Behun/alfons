@@ -22,17 +22,21 @@ load_dotenv()
 
 # STT from human to Grok through elevenlabs.io 
 async def transcribe_audio(audio_url: str) -> str:
-    # audio file to transcribe
-    url = "https://api.elevenlabs.io/v1/speech-to-text" 
+    url = "https://api.elevenlabs.io/v1/speech-to-text"
     headers = {"xi-api-key": os.getenv("ELEVENLABS_API_KEY")}
-    data = {"audio_url": audio_url}
-    # transcript to return
+    data = {
+        "audio_url": audio_url,
+        "model_id": "eleven_monolingual_v1"
+    }
     response = requests.post(url, headers=headers, json=data)
-    return response.json()["transcript"]
+    data = response.json()
+    if "transcript" not in data:
+        print("Transcription API error or unexpected response:", data)
+        return "[Transcription failed]"
+    return data["transcript"]
 
 ## TTS from Grok to human through elevenlabs.io
 async def synthesize_speech(text: str) -> str:
-    
     url = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDQ8ikWAm"
     headers = {
         "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
