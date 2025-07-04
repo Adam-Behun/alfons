@@ -8,3 +8,4 @@ node_modules/
 static/output.mp3
 conversation_logs.csv
 notes.txt
+static/
