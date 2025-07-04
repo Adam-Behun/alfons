@@ -17,10 +17,6 @@ transcribing audio, or interacting with the database—is handled by separate Py
 (helper modules) like telephony.py, conversation.py, speech.py, and database.py.
 """
 
-"""
-main.py - Improved version with better error handling and reliability
-"""
-
 import sys
 import os
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -30,6 +26,10 @@ from fastapi.staticfiles import StaticFiles
 from twilio.twiml.voice_response import VoiceResponse
 import logging
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables first
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(
@@ -204,7 +204,7 @@ async def voice_webhook(request: Request):
                 if transcription == "[Error during transcription]":
                     twiml.say("I'm sorry, I couldn't understand your response. Please try again.")
                     twiml.record(action=f"{os.getenv('BASE_URL')}/voice", maxLength="30", playBeep=True)
-                    return Response(content=str(twiml), media_type="application/xml")
+                    return Response(content=str(twiml), media_type="text/xml")
                 
                 # Step 2: Process the message with AI
                 logger.info("Processing message with AI...")
@@ -213,7 +213,7 @@ async def voice_webhook(request: Request):
                 logger.info(f"Extracted data: {extracted_data}")
                 
                 # Step 3: Check if we need to escalate
-                if "escalate" in response_text.lower():
+                if extracted_data.get("escalate", False):
                     logger.info("Escalating to human...")
                     human_number = os.getenv("HUMAN_ESCALATION_NUMBER")
                     if human_number:
@@ -261,7 +261,9 @@ async def voice_webhook(request: Request):
         
         twiml_str = str(twiml)
         logger.info(f"Returning TwiML: {twiml_str}")
-        return Response(content=twiml_str, media_type="application/xml")
+        
+        # Return proper XML response for Twilio
+        return Response(content=twiml_str, media_type="text/xml")
         
     except Exception as e:
         logger.error(f"Critical error in voice webhook: {str(e)}")
@@ -271,7 +273,7 @@ async def voice_webhook(request: Request):
         emergency_twiml = VoiceResponse()
         emergency_twiml.say("I apologize, but I'm experiencing technical difficulties. Please try calling again in a few minutes.")
         
-        return Response(content=str(emergency_twiml), media_type="application/xml")
+        return Response(content=str(emergency_twiml), media_type="text/xml")
 
 # Error handlers
 @app.exception_handler(Exception)

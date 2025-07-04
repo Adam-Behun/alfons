@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
-DEFAULT_VOICE_ID = "21m00Tcm4TlvDQ8ikWAM"  # Rachel voice
+DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam voice
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 
@@ -45,17 +45,26 @@ async def transcribe_audio(audio_url: str) -> str:
     
     url = f"{ELEVENLABS_BASE_URL}/speech-to-text"
     headers = {"xi-api-key": api_key}
-    data = {
-        "audio_url": audio_url,
-        "model_id": "eleven_monolingual_v1"
-    }
     
     for attempt in range(MAX_RETRIES):
         try:
             logger.info(f"Transcription attempt {attempt + 1}/{MAX_RETRIES}")
             
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as session:
-                async with session.post(url, headers=headers, json=data) as response:
+            # First, download the audio file from Twilio
+            async with aiohttp.ClientSession() as session:
+                async with session.get(audio_url) as audio_response:
+                    if audio_response.status != 200:
+                        logger.error(f"Failed to download audio: {audio_response.status}")
+                        continue
+                    
+                    audio_data = await audio_response.read()
+                    
+                # Now send as multipart form data
+                form_data = aiohttp.FormData()
+                form_data.add_field('audio', audio_data, filename='recording.wav', content_type='audio/wav')
+                form_data.add_field('model_id', 'eleven_english_sts_v2')
+                
+                async with session.post(url, headers=headers, data=form_data) as response:
                     logger.info(f"Transcription API response status: {response.status}")
                     
                     if response.status == 200:
@@ -72,7 +81,7 @@ async def transcribe_audio(audio_url: str) -> str:
                     
                     elif response.status == 429:
                         logger.warning("Rate limit exceeded, waiting before retry...")
-                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        await asyncio.sleep(2 ** attempt)
                         continue
                     
                     else:
@@ -84,12 +93,6 @@ async def transcribe_audio(audio_url: str) -> str:
                         
                         await asyncio.sleep(1)
                         
-        except asyncio.TimeoutError:
-            logger.error(f"Transcription timeout on attempt {attempt + 1}")
-            if attempt == MAX_RETRIES - 1:
-                return "[Transcription timeout]"
-            await asyncio.sleep(1)
-            
         except Exception as e:
             logger.error(f"Transcription error on attempt {attempt + 1}: {str(e)}")
             if attempt == MAX_RETRIES - 1:
