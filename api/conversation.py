@@ -72,9 +72,8 @@ Rules:
         formatted_prompt = prompt.format(text=text)
         logger.info("Sending request to XAI...")
         
-        response = await llm.agenerate([formatted_prompt])
-        result = response.generations[0][0].text
-        
+        response = await llm.ainvoke(formatted_prompt)
+        result = response.content if hasattr(response, 'content') else str(response)
         logger.info(f"Raw AI response: {result}")
         
         # Parse the structured response

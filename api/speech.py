@@ -39,9 +39,16 @@ async def transcribe_audio(audio_url: str) -> str:
     logger.info(f"Starting transcription for: {audio_url}")
     
     api_key = os.getenv("ELEVENLABS_API_KEY")
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+    
     if not api_key:
         logger.error("ElevenLabs API key not found")
         return "[API key not configured]"
+    
+    if not twilio_sid or not twilio_token:
+        logger.error("Twilio credentials not found")
+        return "[Twilio credentials not configured]"
     
     url = f"{ELEVENLABS_BASE_URL}/speech-to-text"
     headers = {"xi-api-key": api_key}
@@ -50,19 +57,23 @@ async def transcribe_audio(audio_url: str) -> str:
         try:
             logger.info(f"Transcription attempt {attempt + 1}/{MAX_RETRIES}")
             
-            # First, download the audio file from Twilio
+            # Download the audio file from Twilio with authentication
             async with aiohttp.ClientSession() as session:
-                async with session.get(audio_url) as audio_response:
+                # Create basic auth for Twilio
+                auth = aiohttp.BasicAuth(twilio_sid, twilio_token)
+                
+                async with session.get(audio_url, auth=auth) as audio_response:
                     if audio_response.status != 200:
                         logger.error(f"Failed to download audio: {audio_response.status}")
                         continue
                     
                     audio_data = await audio_response.read()
+                    logger.info(f"Downloaded audio file, size: {len(audio_data)} bytes")
                     
-                # Now send as multipart form data
+                # Now send as multipart form data to ElevenLabs
                 form_data = aiohttp.FormData()
-                form_data.add_field('audio', audio_data, filename='recording.wav', content_type='audio/wav')
-                form_data.add_field('model_id', 'eleven_english_sts_v2')
+                form_data.add_field('file', audio_data, filename='recording.wav', content_type='audio/wav')
+                form_data.add_field('model_id', 'scribe_v1_experimental')
                 
                 async with session.post(url, headers=headers, data=form_data) as response:
                     logger.info(f"Transcription API response status: {response.status}")
@@ -71,8 +82,8 @@ async def transcribe_audio(audio_url: str) -> str:
                         result = await response.json()
                         logger.info(f"Transcription successful: {result}")
                         
-                        if "transcript" in result and result["transcript"]:
-                            transcript = result["transcript"].strip()
+                        if "text" in result and result["text"]:
+                            transcript = result["text"].strip()
                             logger.info(f"Final transcript: {transcript}")
                             return transcript
                         else:
@@ -100,6 +111,7 @@ async def transcribe_audio(audio_url: str) -> str:
             await asyncio.sleep(1)
     
     return "[Transcription failed after retries]"
+
 
 async def synthesize_speech(text: str) -> Optional[str]:
     """
