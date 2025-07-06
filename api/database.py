@@ -38,6 +38,8 @@ async def log_conversation(
         "patient_id": extracted_data.get("patient_id"),
         "procedure_code": extracted_data.get("procedure_code"),
         "insurance": extracted_data.get("insurance"),
+        "approval_status": extracted_data.get("approval_status"),
+        "auth_number": extracted_data.get("auth_number"),
         "escalated": escalated,
         "timestamp": datetime.utcnow().isoformat()
     }
