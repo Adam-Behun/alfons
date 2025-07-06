@@ -1,0 +1,407 @@
+/* Voice Agent Status Component Styles */
+
+.container {
+  background-color: white;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+}
+
+/* Header Styles */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.headerContent {
+  display: flex;
+  flex-direction: column;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin: 0.25rem 0 0 0;
+}
+
+.headerControls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.statusBadge {
+  padding: 0.5rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.statusActive {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.statusStandby {
+  background-color: #f3f4f6;
+  color: #6b7280;
+}
+
+.lastUpdate {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+/* Active Call Styles */
+.activeCall {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.5rem;
+}
+
+.activeCallHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.activeCallTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #166534;
+  margin: 0;
+}
+
+.activeCallTime {
+  font-size: 0.75rem;
+  color: #059669;
+  font-weight: 500;
+}
+
+.conversationPair {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.message {
+  background-color: white;
+  padding: 0.75rem;
+  border-radius: 0.25rem;
+  border-left: 4px solid;
+}
+
+.messageInsurance {
+  border-left-color: #3b82f6;
+}
+
+.messageAlfons {
+  border-left-color: #8b5cf6;
+}
+
+.messageLabel {
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.messageInsurance .messageLabel {
+  color: #1d4ed8;
+}
+
+.messageAlfons .messageLabel {
+  color: #7c3aed;
+}
+
+.messageText {
+  font-size: 0.875rem;
+  color: #1f2937;
+  line-height: 1.4;
+}
+
+/* Extracted Data Styles */
+.extractedData {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #bbf7d0;
+}
+
+.extractedDataLabel {
+  font-size: 0.75rem;
+  color: #059669;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.badgeContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.dataBadge {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.badgePatient {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.badgeProcedure {
+  background-color: #e0e7ff;
+  color: #5b21b6;
+}
+
+.badgeApproved {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.badgeDenied {
+  background-color: #fef2f2;
+  color: #991b1b;
+}
+
+.badgePending {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.badgeAuth {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+/* History Section */
+.historySection {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.historyHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.historyTitle {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #374151;
+  margin: 0;
+}
+
+.historyCount {
+  font-size: 0.875rem;
+  color: #9ca3af;
+}
+
+/* Loading States */
+.loadingContainer {
+  text-align: center;
+  padding: 2rem;
+}
+
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.loadingText {
+  color: #9ca3af;
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+/* Empty State */
+.emptyState {
+  text-align: center;
+  padding: 2rem;
+  background-color: #f9fafb;
+  border-radius: 0.5rem;
+}
+
+.emptyStateText {
+  color: #9ca3af;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.emptyStateSubtext {
+  color: #d1d5db;
+  font-size: 0.75rem;
+  margin: 0.25rem 0 0 0;
+}
+
+/* Log Container */
+.logContainer {
+  max-height: 24rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.logEntry {
+  padding: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.logEntry:hover {
+  background-color: #f9fafb;
+}
+
+.logEntryActive {
+  border-color: #bbf7d0;
+  background-color: #f0fdf4;
+}
+
+.logHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.logTime {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+.logCallId {
+  font-size: 0.75rem;
+  color: #d1d5db;
+}
+
+.logMessages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.logMessage {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.logSpeaker {
+  font-weight: 500;
+  font-size: 0.75rem;
+  min-width: 3rem;
+  color: #6b7280;
+}
+
+.logText {
+  color: #1f2937;
+  line-height: 1.4;
+  flex: 1;
+}
+
+/* Log Extracted Data */
+.logExtractedData {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.logBadgeContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.logBadge {
+  padding: 0.125rem 0.25rem;
+  font-size: 0.75rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.logBadgePatient {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.logBadgeProcedure {
+  background-color: #e0e7ff;
+  color: #5b21b6;
+}
+
+/* Animations */
+.pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 640px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  .headerControls {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .activeCallHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .historyHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+}
