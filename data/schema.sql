@@ -6,6 +6,8 @@ CREATE TABLE conversations (
     patient_id VARCHAR(50),
     procedure_code VARCHAR(50),
     insurance VARCHAR(100),
+    approval_status VARCHAR(20),
+    auth_number VARCHAR(50),
     escalated BOOLEAN DEFAULT FALSE,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -110,6 +110,8 @@ export default function Home() {
             <th className="border p-2">Patient ID</th>
             <th className="border p-2">Procedure Code</th>
             <th className="border p-2">Insurance</th>
+            <th className="border p-2">Approval Status</th>
+            <th className="border p-2">Auth Number</th>
             <th className="border p-2">Escalated</th>
             <th className="border p-2">Timestamp</th>
           </tr>
@@ -125,6 +127,17 @@ export default function Home() {
               <td className="border p-2">{log.patient_id}</td>
               <td className="border p-2">{log.procedure_code}</td>
               <td className="border p-2">{log.insurance}</td>
+              <td className="border p-2">
+                <span className={`px-2 py-1 rounded text-sm ${
+                  log.approval_status === 'approved' ? 'bg-green-100 text-green-800' :
+                  log.approval_status === 'denied' ? 'bg-red-100 text-red-800' :
+                  log.approval_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-gray-100 text-gray-800'
+                }`}>
+                  {log.approval_status || 'N/A'}
+                </span>
+              </td>
+              <td className="border p-2">{log.auth_number || 'N/A'}</td>
               <td className="border p-2">{log.escalated ? 'Yes' : 'No'}</td>
               <td className="border p-2">{log.timestamp}</td>
             </tr>
