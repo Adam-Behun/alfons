@@ -1,16 +1,18 @@
 """
 speech.py
 
-Speech-to-text (Human to text for Grok) and text-to-speech (Grok to speech for human) 
-using ElevenLabs API as audio processing for the Alfons backend.
+Speech-to-text (Human to text for OpenAI) and text-to-speech (OpenAI to speech for human) 
+using OpenAI Whisper and ElevenLabs APIs for the Alfons backend.
 
-https://elevenlabs.io/docs/api-reference/introduction
 Environment variables required:
-- ELEVENLABS_API_KEY: API key for ElevenLabs
+- OPENAI_API_KEY: API key for OpenAI Whisper
+- ELEVENLABS_API_KEY: API key for ElevenLabs TTS
+- TWILIO_ACCOUNT_SID: Twilio account SID for authenticated audio downloads
+- TWILIO_AUTH_TOKEN: Twilio auth token for authenticated audio downloads
 - BASE_URL: The public URL where generated audio files can be accessed
 
 Functions:
-- transcribe_audio: Converts audio at a given URL to text using ElevenLabs
+- transcribe_audio: Converts audio at a given URL to text using OpenAI Whisper
 - synthesize_speech: Converts text to speech, saves the audio, and returns a public URL
 """
 
@@ -28,66 +30,68 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
-DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam voice
+DEFAULT_VOICE_ID = "21m00Tcm4TlvDQ8ikWAM"  # Rachel voice
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 
 async def transcribe_audio(audio_url: str) -> str:
     """
-    Transcribe audio from URL using ElevenLabs API with robust error handling
+    Transcribe audio from URL using OpenAI Whisper API with robust error handling
     """
     logger.info(f"Starting transcription for: {audio_url}")
     
-    api_key = os.getenv("ELEVENLABS_API_KEY")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
     twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
     twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
     
-    if not api_key:
-        logger.error("ElevenLabs API key not found")
+    if not openai_api_key:
+        logger.error("OpenAI API key not found")
         return "[API key not configured]"
     
     if not twilio_sid or not twilio_token:
         logger.error("Twilio credentials not found")
         return "[Twilio credentials not configured]"
     
-    url = f"{ELEVENLABS_BASE_URL}/speech-to-text"
-    headers = {"xi-api-key": api_key}
-    
     for attempt in range(MAX_RETRIES):
         try:
             logger.info(f"Transcription attempt {attempt + 1}/{MAX_RETRIES}")
             
-            # Download the audio file from Twilio with authentication
-            async with aiohttp.ClientSession() as session:
-                # Create basic auth for Twilio
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as session:
+                # Download the audio file from Twilio with authentication
                 auth = aiohttp.BasicAuth(twilio_sid, twilio_token)
                 
                 async with session.get(audio_url, auth=auth) as audio_response:
                     if audio_response.status != 200:
                         logger.error(f"Failed to download audio: {audio_response.status}")
+                        if attempt == MAX_RETRIES - 1:
+                            return "[Audio download failed]"
+                        await asyncio.sleep(1)
                         continue
                     
                     audio_data = await audio_response.read()
                     logger.info(f"Downloaded audio file, size: {len(audio_data)} bytes")
-                    
-                # Now send as multipart form data to ElevenLabs
+                
+                # Send to OpenAI Whisper API
+                url = "https://api.openai.com/v1/audio/transcriptions"
+                headers = {"Authorization": f"Bearer {openai_api_key}"}
+                
                 form_data = aiohttp.FormData()
                 form_data.add_field('file', audio_data, filename='recording.wav', content_type='audio/wav')
-                form_data.add_field('model_id', 'scribe_v1_experimental')
+                form_data.add_field('model', 'whisper-1')
+                form_data.add_field('response_format', 'text')
                 
                 async with session.post(url, headers=headers, data=form_data) as response:
                     logger.info(f"Transcription API response status: {response.status}")
                     
                     if response.status == 200:
-                        result = await response.json()
-                        logger.info(f"Transcription successful: {result}")
+                        result = await response.text()
+                        transcript = result.strip()
+                        logger.info(f"Transcription successful: {transcript}")
                         
-                        if "text" in result and result["text"]:
-                            transcript = result["text"].strip()
-                            logger.info(f"Final transcript: {transcript}")
+                        if transcript:
                             return transcript
                         else:
-                            logger.warning("No transcript in response")
+                            logger.warning("Empty transcript returned")
                             return "[No speech detected]"
                     
                     elif response.status == 429:
@@ -104,6 +108,12 @@ async def transcribe_audio(audio_url: str) -> str:
                         
                         await asyncio.sleep(1)
                         
+        except asyncio.TimeoutError:
+            logger.error(f"Transcription timeout on attempt {attempt + 1}")
+            if attempt == MAX_RETRIES - 1:
+                return "[Transcription timeout]"
+            await asyncio.sleep(1)
+            
         except Exception as e:
             logger.error(f"Transcription error on attempt {attempt + 1}: {str(e)}")
             if attempt == MAX_RETRIES - 1:
@@ -111,7 +121,6 @@ async def transcribe_audio(audio_url: str) -> str:
             await asyncio.sleep(1)
     
     return "[Transcription failed after retries]"
-
 
 async def synthesize_speech(text: str) -> Optional[str]:
     """
