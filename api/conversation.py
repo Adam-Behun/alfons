@@ -1,4 +1,4 @@
-from langchain_xai import ChatXAI
+from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from pydantic import BaseModel
 import os
@@ -15,30 +15,34 @@ class AuthorizationData(BaseModel):
     patient_id: str = None
     procedure_code: str = None
     insurance: str = None
+    approval_status: str = None
+    auth_number: str = None
 
 async def process_message(text: str) -> Tuple[str, Dict[str, Any]]:
     """
-    Process user message using XAI/Grok and extract relevant data
+    Process user message using OpenAI GPT-4o-mini and extract relevant data
     Returns tuple of (response_text, extracted_data)
     """
     logger.info(f"Processing message: {text[:100]}...")
     
-    # Check if XAI API key is available
-    xai_api_key = os.getenv("XAI_API_KEY")
-    if not xai_api_key:
-        logger.error("XAI API key not found")
+    # Check if OpenAI API key is available
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        logger.error("OpenAI API key not found")
         return "I'm sorry, I'm having trouble accessing my AI services right now.", {
             "patient_id": None,
             "procedure_code": None,
-            "insurance": None
+            "insurance": None,
+            "approval_status": None,
+            "auth_number": None
         }
     
     try:
         # Initialize the LLM
-        llm = ChatXAI(
-            api_key=xai_api_key,
-            model="grok-3-mini",
-            temperature=0.3,  # Lower temperature for more consistent responses
+        llm = ChatOpenAI(
+            api_key=openai_api_key,
+            model="gpt-4o-mini",
+            temperature=0.3,
             max_tokens=500
         )
         
@@ -46,34 +50,36 @@ async def process_message(text: str) -> Tuple[str, Dict[str, Any]]:
         prompt = PromptTemplate(
             input_variables=["text"],
             template="""
-You are Alfons, a helpful prior authorization assistant. Your job is to:
-1. Extract patient information (patient ID, procedure code, insurance)
-2. Respond empathetically and professionally
-3. Determine if the request needs human escalation
+You are Alfons, a professional prior authorization assistant calling on behalf of a healthcare provider. You are speaking to an insurance company representative to obtain prior authorization for a patient's procedure.
 
-Patient Input: {text}
+Insurance Rep Response: {text}
 
-Please respond in this exact format:
-RESPONSE: [Your empathetic response to the patient]
+Extract information and respond professionally in this exact format:
+RESPONSE: [Your professional response to continue the authorization conversation]
 PATIENT_ID: [extracted patient ID or "none"]
-PROCEDURE_CODE: [extracted procedure code or "none"]  
-INSURANCE: [extracted insurance name or "none"]
-ESCALATE: [yes/no - whether this needs human escalation]
+PROCEDURE_CODE: [extracted procedure/CPT code or "none"]  
+INSURANCE: [insurance company name or "none"]
+APPROVAL_STATUS: [approved/denied/pending/none]
+AUTH_NUMBER: [authorization number if provided or "none"]
+ESCALATE: [yes/no - if you need human intervention]
 
 Rules:
-- If you can't extract clear information, ask for clarification
-- If the request is complex, urgent, or involves a complaint, set ESCALATE to "yes"
-- Always be empathetic and professional
-- Keep responses concise but helpful
+- Be professional and concise like a healthcare administrator
+- Ask for specific authorization details if not provided
+- Extract all relevant medical/insurance information
+- If you get approval, ask for authorization number
+- If denied, ask for denial reason and appeal process
+- Keep responses under 50 words for phone conversations
 """
         )
         
         # Generate response
         formatted_prompt = prompt.format(text=text)
-        logger.info("Sending request to XAI...")
+        logger.info("Sending request to OpenAI...")
         
         response = await llm.ainvoke(formatted_prompt)
         result = response.content if hasattr(response, 'content') else str(response)
+        
         logger.info(f"Raw AI response: {result}")
         
         # Parse the structured response
@@ -88,11 +94,13 @@ Rules:
         logger.error(f"Error in process_message: {str(e)}")
         
         # Fallback response
-        fallback_response = "I understand you're calling about a prior authorization. Could you please provide your patient ID, procedure code, and insurance information?"
+        fallback_response = "I understand you're calling about a prior authorization. Could you please provide the patient ID, procedure code, and insurance information?"
         fallback_data = {
             "patient_id": None,
             "procedure_code": None,
-            "insurance": None
+            "insurance": None,
+            "approval_status": None,
+            "auth_number": None
         }
         
         return fallback_response, fallback_data
@@ -107,6 +115,8 @@ def parse_ai_response(response_text: str) -> Tuple[str, Dict[str, Any]]:
         patient_id = None
         procedure_code = None
         insurance = None
+        approval_status = None
+        auth_number = None
         escalate = False
         
         # Extract using regex patterns
@@ -132,6 +142,18 @@ def parse_ai_response(response_text: str) -> Tuple[str, Dict[str, Any]]:
             if insurance.lower() == "none":
                 insurance = None
         
+        approval_status_match = re.search(r'APPROVAL_STATUS:\s*(.+?)(?=\n|$)', response_text)
+        if approval_status_match:
+            approval_status = approval_status_match.group(1).strip()
+            if approval_status.lower() == "none":
+                approval_status = None
+        
+        auth_number_match = re.search(r'AUTH_NUMBER:\s*(.+?)(?=\n|$)', response_text)
+        if auth_number_match:
+            auth_number = auth_number_match.group(1).strip()
+            if auth_number.lower() == "none":
+                auth_number = None
+        
         escalate_match = re.search(r'ESCALATE:\s*(.+?)(?=\n|$)', response_text)
         if escalate_match:
             escalate_text = escalate_match.group(1).strip().lower()
@@ -145,6 +167,8 @@ def parse_ai_response(response_text: str) -> Tuple[str, Dict[str, Any]]:
             "patient_id": patient_id,
             "procedure_code": procedure_code,
             "insurance": insurance,
+            "approval_status": approval_status,
+            "auth_number": auth_number,
             "escalate": escalate
         }
         
@@ -158,6 +182,8 @@ def parse_ai_response(response_text: str) -> Tuple[str, Dict[str, Any]]:
             "patient_id": None,
             "procedure_code": None,
             "insurance": None,
+            "approval_status": None,
+            "auth_number": None,
             "escalate": False
         }
         
@@ -170,7 +196,9 @@ def extract_info_from_text(text: str) -> Dict[str, Any]:
     extracted = {
         "patient_id": None,
         "procedure_code": None,
-        "insurance": None
+        "insurance": None,
+        "approval_status": None,
+        "auth_number": None
     }
     
     # Common patterns for patient ID
@@ -194,6 +222,19 @@ def extract_info_from_text(text: str) -> Dict[str, Any]:
         r'plan[\s:]*([A-Za-z\s]+)'
     ]
     
+    # Common patterns for approval status
+    approval_patterns = [
+        r'(?:approved|denied|pending|authorization)[\s:]*([A-Za-z]+)',
+        r'status[\s:]*([A-Za-z]+)'
+    ]
+    
+    # Common patterns for authorization number
+    auth_patterns = [
+        r'authorization\s+(?:number|code)[\s:]*([A-Z0-9\-]+)',
+        r'auth[\s:]*([A-Z0-9\-]+)',
+        r'reference[\s:]*([A-Z0-9\-]+)'
+    ]
+    
     text_lower = text.lower()
     
     # Extract patient ID
@@ -215,6 +256,20 @@ def extract_info_from_text(text: str) -> Dict[str, Any]:
         match = re.search(pattern, text_lower)
         if match:
             extracted["insurance"] = match.group(1).title().strip()
+            break
+    
+    # Extract approval status
+    for pattern in approval_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            extracted["approval_status"] = match.group(1).lower()
+            break
+    
+    # Extract authorization number
+    for pattern in auth_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            extracted["auth_number"] = match.group(1).upper()
             break
     
     return extracted
