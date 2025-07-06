@@ -2,148 +2,133 @@
  * index.tsx
  *
  * This is the main frontend page for the Alfons Prior Authorization Bot.
- * It allows users to trigger outbound calls and view conversation logs.
- * Integrates with Supabase for real-time updates and a FastAPI backend for call logic.
+ * It displays the EHR interface and voice agent status with real-time updates.
  */
 
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
+import EHRInterface from '../components/EHRInterface';
+import VoiceAgentStatus from '../components/VoiceAgentStatus';
 
 // Initialize Supabase client using environment variables
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY!
-const supabase = createClient(supabaseUrl, supabaseKey)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function Home() {
-  // State for the phone number input and conversation logs
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [logs, setLogs] = useState<any[]>([]);
-
-  /**
-   * Fetches conversation logs from the backend API and updates state.
-   */
-  const fetchLogs = async () => {
-    const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/logs`);
-    setLogs(response.data);
-  };
-
-  /**
-   * useEffect runs once on mount:
-   * - Fetches initial logs.
-   * - Subscribes to Supabase real-time updates for the 'conversations' table.
-   * - Cleans up the subscription on unmount.
-   */
-  useEffect(() => {
-    fetchLogs();
-    // Subscribe to all changes in the 'conversations' table
-    const subscription = supabase
-      .channel('conversations')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'conversations' },
-        (payload) => {
-          fetchLogs(); // Refresh logs on any change
-        }
-      )
-      .subscribe();
-
-    // Cleanup: remove the subscription when the component unmounts
-    return () => {
-      supabase.removeChannel(subscription);
-    };
-  }, []);
+  const [isCallInProgress, setIsCallInProgress] = useState(false);
+  const [callStatus, setCallStatus] = useState('');
 
   /**
    * Sends a POST request to the backend to trigger a phone call.
-   * The phone number is sent as form data.
    */
   const triggerCall = async () => {
+    if (!phoneNumber.trim()) {
+      alert('Please enter a phone number');
+      return;
+    }
+
     const formData = new FormData();
     formData.append('phone_number', phoneNumber);
 
     try {
-      await axios.post(
+      setIsCallInProgress(true);
+      setCallStatus('Initiating call...');
+      
+      const response = await axios.post(
         `${process.env.NEXT_PUBLIC_API_URL}/trigger-call`,
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' } }
       );
-      // Show a success message or clear the input
+      
+      setCallStatus(`Call initiated successfully! Call SID: ${response.data.call_sid || 'Unknown'}`);
+      
+      // Clear status after 5 seconds
+      setTimeout(() => {
+        setCallStatus('');
+        setIsCallInProgress(false);
+      }, 5000);
+      
     } catch (error) {
-      // Log the error for debugging
       console.error('Error triggering call:', error);
-      alert('Failed to trigger call. Please check your backend connection.');
+      setCallStatus('Failed to trigger call. Please check your backend connection.');
+      setIsCallInProgress(false);
+      
+      // Clear error after 5 seconds
+      setTimeout(() => setCallStatus(''), 5000);
     }
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Alfons: Prior Authorization Bot</h1>
-      <div className="mb-4">
-        
-        {/* Input for the phone number to call */}
-        <input
-          type="text"
-          value={phoneNumber}
-          onChange={(e) => setPhoneNumber(e.target.value)}
-          placeholder="Enter phone number (e.g., +1234567890)"
-          className="p-2 border rounded"
-        />
-
-        {/* Button to trigger the call */}
-        <button
-          onClick={triggerCall}
-          className="ml-2 bg-blue-500 text-white p-2 rounded"
-        >
-          Trigger Call
-        </button>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                Alfons Prior Authorization System
+              </h1>
+              <p className="text-gray-600 mt-1">
+                Real-time EHR integration with AI voice agent
+              </p>
+            </div>
+            
+            {/* Call Trigger Controls */}
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="Enter phone number (+1234567890)"
+                  className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={isCallInProgress}
+                />
+                <button
+                  onClick={triggerCall}
+                  disabled={isCallInProgress}
+                  className={`px-4 py-2 rounded-md font-medium transition-colors ${
+                    isCallInProgress
+                      ? 'bg-gray-400 text-white cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {isCallInProgress ? 'Calling...' : 'Start Prior Auth Call'}
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Call Status */}
+          {callStatus && (
+            <div className={`mt-4 p-3 rounded-md ${
+              callStatus.includes('Failed') || callStatus.includes('error')
+                ? 'bg-red-50 text-red-700 border border-red-200'
+                : 'bg-green-50 text-green-700 border border-green-200'
+            }`}>
+              {callStatus}
+            </div>
+          )}
+        </div>
       </div>
-      <h2 className="text-xl font-bold">Conversation Logs</h2>
 
-      {/* Table displaying conversation logs */}
-      <table className="w-full border">
-        <thead>
-          <tr>
-            <th className="border p-2">Call SID</th>
-            <th className="border p-2">User Input</th>
-            <th className="border p-2">Bot Response</th>
-            <th className="border p-2">Patient ID</th>
-            <th className="border p-2">Procedure Code</th>
-            <th className="border p-2">Insurance</th>
-            <th className="border p-2">Approval Status</th>
-            <th className="border p-2">Auth Number</th>
-            <th className="border p-2">Escalated</th>
-            <th className="border p-2">Timestamp</th>
-          </tr>
-        </thead>
-        <tbody>
-
-          {/* Render each log entry as a table row */}
-          {logs.map((log: any) => (
-            <tr key={log.id}>
-              <td className="border p-2">{log.call_sid}</td>
-              <td className="border p-2">{log.user_input}</td>
-              <td className="border p-2">{log.bot_response}</td>
-              <td className="border p-2">{log.patient_id}</td>
-              <td className="border p-2">{log.procedure_code}</td>
-              <td className="border p-2">{log.insurance}</td>
-              <td className="border p-2">
-                <span className={`px-2 py-1 rounded text-sm ${
-                  log.approval_status === 'approved' ? 'bg-green-100 text-green-800' :
-                  log.approval_status === 'denied' ? 'bg-red-100 text-red-800' :
-                  log.approval_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                  'bg-gray-100 text-gray-800'
-                }`}>
-                  {log.approval_status || 'N/A'}
-                </span>
-              </td>
-              <td className="border p-2">{log.auth_number || 'N/A'}</td>
-              <td className="border p-2">{log.escalated ? 'Yes' : 'No'}</td>
-              <td className="border p-2">{log.timestamp}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Left Column - EHR Interface */}
+          <div>
+            <EHRInterface />
+          </div>
+          
+          {/* Right Column - Voice Agent Status */}
+          <div>
+            <VoiceAgentStatus />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
