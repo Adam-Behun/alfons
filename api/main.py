@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from twilio.twiml.voice_response import VoiceResponse
+from api.patients import get_patients, get_patient_by_id, update_patient_auth_status, get_pending_authorizations
 import logging
 from typing import Optional
 from dotenv import load_dotenv
@@ -157,6 +158,60 @@ async def fetch_logs():
     except Exception as e:
         logger.error(f"Error fetching logs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch logs: {str(e)}")
+
+@app.get("/patients")
+async def fetch_patients():
+    """Fetch all patients requiring prior authorization"""
+    try:
+        patients = await get_patients()
+        logger.info(f"Fetched {len(patients)} patients")
+        return patients
+    except Exception as e:
+        logger.error(f"Error fetching patients: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch patients: {str(e)}")
+
+@app.get("/patients/{patient_id}")
+async def fetch_patient(patient_id: int):
+    """Fetch a specific patient by ID"""
+    try:
+        patient = await get_patient_by_id(patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        return patient
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching patient {patient_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch patient: {str(e)}")
+
+@app.put("/patients/{patient_id}/auth-status")
+async def update_auth_status(patient_id: int, status: str = Form(...)):
+    """Update prior authorization status for a patient"""
+    try:
+        valid_statuses = ["Pending", "Approved", "Denied", "Under Review"]
+        if status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+        
+        updated_patient = await update_patient_auth_status(patient_id, status)
+        logger.info(f"Updated patient {patient_id} auth status to {status}")
+        return {"status": "success", "patient": updated_patient}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating patient {patient_id} auth status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update auth status: {str(e)}")
+
+@app.get("/patients/pending")
+async def fetch_pending_authorizations():
+    """Fetch all patients with pending prior authorization"""
+    try:
+        patients = await get_pending_authorizations()
+        logger.info(f"Fetched {len(patients)} pending authorizations")
+        return patients
+    except Exception as e:
+        logger.error(f"Error fetching pending authorizations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch pending authorizations: {str(e)}")
+
 
 @app.get("/voice")
 async def voice_get():
