@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
-DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam voice - should work with free accounts
+DEFAULT_VOICE_ID = "21m00Tcm4TlvDQ8ikWAM"  # Rachel voice
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 

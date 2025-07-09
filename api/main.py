@@ -136,14 +136,28 @@ async def trigger_call(phone_number: str = Form(...)):
     """Trigger an outbound call"""
     logger.info(f"Triggering call to: {phone_number}")
     
-    # Validate phone number format
-    if not phone_number.startswith('+'):
-        raise HTTPException(status_code=400, detail="Phone number must start with +")
+    # Clean and format phone number
+    cleaned_number = phone_number.strip().replace("-", "").replace("(", "").replace(")", "").replace(" ", "")
+    
+    # Add + prefix if missing and number looks like US format
+    if not cleaned_number.startswith('+'):
+        if len(cleaned_number) == 10:
+            # US number without country code
+            cleaned_number = f"+1{cleaned_number}"
+        elif len(cleaned_number) == 11 and cleaned_number.startswith('1'):
+            # US number with 1 prefix but no +
+            cleaned_number = f"+{cleaned_number}"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid phone number format. Please use +1234567890 or 1234567890")
+    
+    # Basic validation for E.164 format
+    if not cleaned_number.startswith('+') or len(cleaned_number) < 10:
+        raise HTTPException(status_code=400, detail="Phone number must be in E.164 format (+1234567890)")
     
     try:
-        call_sid = make_call(phone_number)
+        call_sid = make_call(cleaned_number)
         logger.info(f"Call triggered successfully: {call_sid}")
-        return {"status": "success", "call_sid": call_sid, "phone_number": phone_number}
+        return {"status": "success", "call_sid": call_sid, "phone_number": cleaned_number}
     except Exception as e:
         logger.error(f"Error triggering call: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger call: {str(e)}")
@@ -305,9 +319,7 @@ async def voice_webhook(request: Request):
         else:
             # Initial call - no recording yet
             logger.info("Initial call - prompting for input...")
-            twiml.say("Welcome to Alfons, your prior authorization assistant.")
-            twiml.pause(length=1)
-            twiml.say("Please tell me your patient ID, procedure code, and insurance information after the beep.")
+            twiml.say("Hi, this is Jessica. I'm calling to verify eligibility and benefits for a patient.")
             
             action_url = f"{os.getenv('BASE_URL')}/voice"
             logger.info(f"Using action URL: {action_url}")
