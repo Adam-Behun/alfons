@@ -3,8 +3,9 @@
 
 import { useState, useEffect } from 'react';
 import styles from './EHRInterface.module.css';
+import Patient from './Patient';
 
-interface Patient {
+interface PatientRecord {
   id: number;
   patient_name: string;
   date_of_birth: string;
@@ -17,9 +18,11 @@ interface Patient {
 }
 
 export default function EHRInterface() {
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const [patients, setPatients] = useState<PatientRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [callingPatient, setCallingPatient] = useState<number | null>(null);
+  const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
 
   // Demo phone number for all calls
   const DEMO_PHONE = "516-566-7132";
@@ -27,46 +30,16 @@ export default function EHRInterface() {
   const fetchPatients = async () => {
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/patients`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch patients: ${response.statusText}`);
+      }
       const data = await response.json();
       setPatients(data);
+      setError(null);
     } catch (err) {
       console.error('Error fetching patients:', err);
-      // Mock data for demo
-      setPatients([
-        {
-          id: 1,
-          patient_name: "John Smith",
-          date_of_birth: "1980-05-15",
-          insurance_company_name: "Blue Cross Blue Shield",
-          insurance_member_id: "ABC123456",
-          insurance_phone_number: "1-800-555-0123",
-          cpt_code: "99213",
-          appointment_time: "2024-01-15 10:00",
-          prior_auth_status: "Pending"
-        },
-        {
-          id: 2,
-          patient_name: "Mary Johnson",
-          date_of_birth: "1975-08-22",
-          insurance_company_name: "Aetna",
-          insurance_member_id: "DEF789012",
-          insurance_phone_number: "1-800-555-0124",
-          cpt_code: "99214",
-          appointment_time: "2024-01-15 14:30",
-          prior_auth_status: "Pending"
-        },
-        {
-          id: 3,
-          patient_name: "Robert Davis",
-          date_of_birth: "1990-12-03",
-          insurance_company_name: "UnitedHealth",
-          insurance_member_id: "GHI345678",
-          insurance_phone_number: "1-800-555-0125",
-          cpt_code: "99215",
-          appointment_time: "2024-01-16 09:15",
-          prior_auth_status: "Approved"
-        }
-      ]);
+      setError('Failed to load patients from the database. Please check the API connection.');
+      setPatients([]);
     } finally {
       setLoading(false);
     }
@@ -76,7 +49,7 @@ export default function EHRInterface() {
     fetchPatients();
   }, []);
 
-  const triggerCall = async (patient: Patient) => {
+  const triggerCall = async (patient: PatientRecord) => {
     setCallingPatient(patient.id);
     
     const formData = new FormData();
@@ -95,10 +68,31 @@ export default function EHRInterface() {
     }
   };
 
+  const handlePatientClick = (patientId: number) => {
+    setSelectedPatientId(patientId);
+  };
+
+  const handleBackToList = () => {
+    setSelectedPatientId(null);
+  };
+
+  // Show patient details if a patient is selected
+  if (selectedPatientId) {
+    return <Patient patientId={selectedPatientId} onBack={handleBackToList} />;
+  }
+
   if (loading) {
     return (
       <div className={styles.container}>
         <div className={styles.loading}>Loading patients...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.error}>{error}</div>
       </div>
     );
   }
@@ -114,53 +108,66 @@ export default function EHRInterface() {
       {/* Patient List */}
       <div className={styles.content}>
         <div className={styles.patientList}>
-          {patients.map((patient) => (
-            <div key={patient.id} className={styles.patientCard}>
-              <div className={styles.patientInfo}>
-                <div className={styles.patientHeader}>
-                  <h3 className={styles.patientName}>{patient.patient_name}</h3>
-                  <span className={`${styles.statusBadge} ${styles[patient.prior_auth_status.toLowerCase()]}`}>
-                    {patient.prior_auth_status}
-                  </span>
+          {patients.length === 0 ? (
+            <div className={styles.noPatients}>No patients requiring prior authorization at this time.</div>
+          ) : (
+            patients.map((patient) => (
+              <div 
+                key={patient.id} 
+                className={styles.patientCard}
+                onClick={() => handlePatientClick(patient.id)}
+                style={{ cursor: 'pointer' }}>
+                <div className={styles.patientInfo}>
+                  <div className={styles.patientHeader}>
+                    <h3 className={styles.patientName}>
+                      {patient.patient_name}
+                    </h3>
+                    <span className={`${styles.statusBadge} ${styles[patient.prior_auth_status.toLowerCase()]}`}>
+                      {patient.prior_auth_status}
+                    </span>
+                  </div>
+                  
+                  <div className={styles.patientDetails}>
+                    <div className={styles.detailRow}>
+                      <span className={styles.label}>DOB:</span>
+                      <span className={styles.value}>{patient.date_of_birth}</span>
+                    </div>
+                    <div className={styles.detailRow}>
+                      <span className={styles.label}>Insurance:</span>
+                      <span className={styles.value}>{patient.insurance_company_name}</span>
+                    </div>
+                    <div className={styles.detailRow}>
+                      <span className={styles.label}>Member ID:</span>
+                      <span className={styles.value}>{patient.insurance_member_id}</span>
+                    </div>
+                    <div className={styles.detailRow}>
+                      <span className={styles.label}>CPT Code:</span>
+                      <span className={styles.value}>{patient.cpt_code}</span>
+                    </div>
+                    <div className={styles.detailRow}>
+                      <span className={styles.label}>Appointment:</span>
+                      <span className={styles.value}>{patient.appointment_time}</span>
+                    </div>
+                  </div>
                 </div>
                 
-                <div className={styles.patientDetails}>
-                  <div className={styles.detailRow}>
-                    <span className={styles.label}>DOB:</span>
-                    <span className={styles.value}>{patient.date_of_birth}</span>
+                {patient.prior_auth_status === 'Pending' && (
+                  <div className={styles.actionSection}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation(); // Prevent card click
+                        triggerCall(patient);
+                      }}
+                      disabled={callingPatient === patient.id}
+                      className={`${styles.callButton} ${callingPatient === patient.id ? styles.calling : ''}`}
+                    >
+                      {callingPatient === patient.id ? 'Calling...' : 'Call Insurance'}
+                    </button>
                   </div>
-                  <div className={styles.detailRow}>
-                    <span className={styles.label}>Insurance:</span>
-                    <span className={styles.value}>{patient.insurance_company_name}</span>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <span className={styles.label}>Member ID:</span>
-                    <span className={styles.value}>{patient.insurance_member_id}</span>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <span className={styles.label}>CPT Code:</span>
-                    <span className={styles.value}>{patient.cpt_code}</span>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <span className={styles.label}>Appointment:</span>
-                    <span className={styles.value}>{patient.appointment_time}</span>
-                  </div>
-                </div>
+                )}
               </div>
-              
-              {patient.prior_auth_status === 'Pending' && (
-                <div className={styles.actionSection}>
-                  <button
-                    onClick={() => triggerCall(patient)}
-                    disabled={callingPatient === patient.id}
-                    className={`${styles.callButton} ${callingPatient === patient.id ? styles.calling : ''}`}
-                  >
-                    {callingPatient === patient.id ? 'Calling...' : 'Call Insurance'}
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>

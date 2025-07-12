@@ -185,6 +185,21 @@ async def fetch_patients():
         raise HTTPException(status_code=500, detail=f"Failed to fetch patients: {str(e)}")
 
 @app.get("/patients/{patient_id}")
+async def get_patient_details(patient_id: int):
+    """Fetch details for a specific patient by ID"""
+    try:
+        patient = await get_patient_by_id(patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        logger.info(f"Fetched details for patient {patient_id}")
+        return patient
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching patient {patient_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch patient details: {str(e)}")
+
+@app.get("/patients/{patient_id}")
 async def fetch_patient(patient_id: int):
     """Fetch a specific patient by ID"""
     try:

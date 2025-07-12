@@ -21,8 +21,8 @@ export default function Home() {
     <div className={styles.container}>
       {/* Header */}
       <div className={styles.header}>
-        <h1 className={styles.title}>Alfons Prior Authorization System</h1>
-        <p className={styles.subtitle}>Real-time EHR integration with AI voice agent</p>
+        <h1 className={styles.title}>Prior Authorization System</h1>
+        <p className={styles.subtitle}>Demo AI Voice Agent</p>
       </div>
 
       {/* Main Content - Two Symmetrical Windows */}
