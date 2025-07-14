@@ -1,5 +1,6 @@
 import os
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
@@ -40,6 +41,48 @@ class Settings(BaseSettings):
         description="API key for OpenAI service"
     )
     
+    # Alfons/Twilio Configuration (from main app)
+    TWILIO_ACCOUNT_SID: Optional[str] = Field(
+        default=None,
+        env="TWILIO_ACCOUNT_SID",
+        description="Twilio account SID"
+    )
+    TWILIO_AUTH_TOKEN: Optional[str] = Field(
+        default=None,
+        env="TWILIO_AUTH_TOKEN",
+        description="Twilio auth token"
+    )
+    TWILIO_PHONE_NUMBER: Optional[str] = Field(
+        default=None,
+        env="TWILIO_PHONE_NUMBER",
+        description="Twilio phone number"
+    )
+    ELEVENLABS_API_KEY: Optional[str] = Field(
+        default=None,
+        env="ELEVENLABS_API_KEY",
+        description="ElevenLabs API key"
+    )
+    SUPABASE_URL: Optional[str] = Field(
+        default=None,
+        env="SUPABASE_URL",
+        description="Supabase URL"
+    )
+    SUPABASE_KEY: Optional[str] = Field(
+        default=None,
+        env="SUPABASE_KEY",
+        description="Supabase key"
+    )
+    HUMAN_ESCALATION_NUMBER: Optional[str] = Field(
+        default=None,
+        env="HUMAN_ESCALATION_NUMBER",
+        description="Human escalation phone number"
+    )
+    BASE_URL: Optional[str] = Field(
+        default=None,
+        env="BASE_URL",
+        description="Base URL for webhooks"
+    )
+    
     # Other configurations
     LOG_LEVEL: str = Field(
         default="INFO",
@@ -68,6 +111,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "allow"  # Allow extra fields from .env
 
 # Instantiate settings
 settings = Settings()
