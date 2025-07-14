@@ -5,7 +5,7 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

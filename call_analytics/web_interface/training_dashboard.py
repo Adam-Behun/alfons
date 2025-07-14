@@ -4,7 +4,7 @@ import pandas as pd
 from typing import List, Dict, Any
 import json
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..database.mongo_connector import MongoConnector
 from ..learning.training_pipeline import TrainingPipeline
 

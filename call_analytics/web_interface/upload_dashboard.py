@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Dict, Any
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..input_sources.historical_uploader import HistoricalUploader
 from ..database.mongo_connector import MongoConnector
 

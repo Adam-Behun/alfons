@@ -4,7 +4,7 @@ import requests  # For API calls
 # Assuming deepgram-sdk or similar; for MVP, use REST API
 # Note: Deepgram and AssemblyAI have Python SDKs, but to avoid extra deps, use requests
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

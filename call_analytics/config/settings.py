@@ -32,10 +32,12 @@ class Settings(BaseSettings):
         env="ASSEMBLYAI_API_KEY",
         description="API key for AssemblyAI STT service"
     )
-    PYANNOTE_API_KEY: Optional[str] = Field(
+    
+    # OpenAI Configuration
+    OPENAI_API_KEY: Optional[str] = Field(
         default=None,
-        env="PYANNOTE_API_KEY",
-        description="API key for pyannote-audio (if required for Hugging Face access)"
+        env="OPENAI_API_KEY", 
+        description="API key for OpenAI service"
     )
     
     # Other configurations
@@ -61,7 +63,7 @@ class Settings(BaseSettings):
         env="EMBEDDING_MODEL",
         description="Sentence-transformers model for embeddings"
     )
-    
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -1,36 +1,36 @@
 import logging
 from typing import Dict, List, Any, Optional
-import requests
 import json
+import asyncio
+from langchain_openai import ChatOpenAI
 
-from config.settings import settings
-from ..analytics.conversation_analyzer import ConversationAnalyzer  # For integration
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class PatternExtractor:
     """
-    Extracts patterns using LLM: winning phrases, objection handling, success patterns.
+    Extracts patterns using OpenAI: winning phrases, objection handling, success patterns.
     Analyzes transcripts or conversation flows to identify repeatable learnings.
     Outputs structured patterns for storage in memory.
     """
     
-    def __init__(self, api_url: str = "https://api.openai.com/v1/chat/completions",  # Placeholder
-                 api_key: Optional[str] = None):
+    def __init__(self):
         """
-        Initialize the extractor with LLM API details.
-        
-        :param api_url: LLM API endpoint.
-        :param api_key: API key for authentication.
+        Initialize the extractor with OpenAI.
         """
-        self.api_url = api_url
-        self.api_key = api_key or settings.get("LLM_API_KEY", None)
-        if not self.api_key:
-            raise ValueError("LLM API key not provided")
+        if not settings.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not provided")
         
-        logger.info("PatternExtractor initialized")
+        self.llm = ChatOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            model="gpt-4",
+            temperature=0.3,
+            max_tokens=1000
+        )
+        logger.info("PatternExtractor initialized with OpenAI")
     
-    def extract_patterns(self, transcript: str, analysis: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def extract_patterns(self, transcript: str, analysis: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Extract patterns from transcript and optional analysis.
         
@@ -41,8 +41,9 @@ class PatternExtractor:
         prompt = self._build_extraction_prompt(transcript, analysis)
         
         try:
-            response = self._call_llm(prompt)
-            patterns = self._parse_llm_response(response)
+            response = await self.llm.agenerate([prompt])
+            result = response.generations[0][0].text
+            patterns = self._parse_llm_response(result)
             logger.info(f"Extracted {len(patterns)} patterns")
             return patterns
         except Exception as e:
@@ -68,31 +69,12 @@ Analyze the following healthcare prior authorization call transcript to extract 
 Transcript: {transcript}
 Analysis: {analysis_str}
 
-Output as JSON list: [{{"type": "winning_phrase", "phrase": "example", "context": "when used", "outcome": "success"}}, ...]
-Types: winning_phrase, objection_handling, success_pattern, failure_pattern.
+Output ONLY a valid JSON list in this exact format:
+[{{"type": "winning_phrase", "phrase": "example phrase", "context": "when used during cost objection", "outcome": "success"}}, {{"type": "objection_handling", "phrase": "let me explain the benefits", "context": "eligibility concerns", "outcome": "success"}}]
+
+Types must be one of: winning_phrase, objection_handling, success_pattern, failure_pattern.
 """
         return prompt
-    
-    def _call_llm(self, prompt: str) -> str:
-        """
-        Call the LLM API.
-        
-        :param prompt: Prompt to send.
-        :return: LLM response text.
-        """
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-4",  # Placeholder
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.5
-        }
-        
-        response = requests.post(self.api_url, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
     
     def _parse_llm_response(self, response: str) -> List[Dict[str, Any]]:
         """
@@ -102,16 +84,43 @@ Types: winning_phrase, objection_handling, success_pattern, failure_pattern.
         :return: List of pattern dicts.
         """
         try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            raise ValueError("Invalid JSON in LLM response")
+            # Clean the response to extract JSON
+            response = response.strip()
+            if response.startswith('```json'):
+                response = response[7:-3]
+            elif response.startswith('```'):
+                response = response[3:-3]
+            
+            patterns = json.loads(response)
+            
+            # Validate structure
+            if not isinstance(patterns, list):
+                raise ValueError("Response is not a list")
+            
+            for pattern in patterns:
+                if not all(key in pattern for key in ['type', 'phrase', 'context', 'outcome']):
+                    raise ValueError("Pattern missing required fields")
+            
+            return patterns
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in LLM response: {response}")
+            return []  # Return empty list instead of failing
+        except Exception as e:
+            logger.error(f"Error parsing LLM response: {e}")
+            return []
+
+# Sync wrapper for backward compatibility
+def extract_patterns_sync(transcript: str, analysis: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Synchronous wrapper for extract_patterns"""
+    extractor = PatternExtractor()
+    return asyncio.run(extractor.extract_patterns(transcript, analysis))
 
 # Example usage (for testing)
 if __name__ == "__main__":
-    extractor = PatternExtractor(api_key="your_api_key_here")
+    extractor = PatternExtractor()
     try:
         mock_transcript = "Rep: Here's why we need it. Insurance: Approved."
-        patterns = extractor.extract_patterns(mock_transcript)
+        patterns = asyncio.run(extractor.extract_patterns(mock_transcript))
         print(json.dumps(patterns, indent=2))
     except Exception as e:
         print(f"Error: {e}")

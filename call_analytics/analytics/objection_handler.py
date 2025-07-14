@@ -4,7 +4,7 @@ import spacy
 from spacy.matcher import PhraseMatcher
 import json
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..learning.pattern_extractor import PatternExtractor  # For integration if needed
 
 logger = logging.getLogger(__name__)

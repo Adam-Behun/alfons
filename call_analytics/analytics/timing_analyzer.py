@@ -3,7 +3,7 @@ from typing import Dict, List, Any, Optional
 import statistics
 import json
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

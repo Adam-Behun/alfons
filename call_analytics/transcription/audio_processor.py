@@ -4,7 +4,7 @@ import os
 from typing import Optional, List
 import ffmpeg  # Assuming ffmpeg-python is installed
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

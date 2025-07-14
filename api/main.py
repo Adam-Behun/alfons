@@ -19,6 +19,9 @@ transcribing audio, or interacting with the database—is handled by separate Py
 
 import sys
 import os
+import json
+from typing import Optional
+from fastapi import UploadFile, File, Form
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -28,6 +31,12 @@ from api.patients import get_patients, get_patient_by_id, update_patient_auth_st
 import logging
 from typing import Optional
 from dotenv import load_dotenv
+
+from call_analytics.input_sources.historical_uploader import HistoricalUploader
+from call_analytics.database.mongo_connector import MongoConnector
+from call_analytics.analytics.conversation_analyzer import ConversationAnalyzer
+from call_analytics.analytics.success_predictor import SuccessPredictor
+from call_analytics.learning.pattern_extractor import PatternExtractor
 
 # Load environment variables first
 load_dotenv()
@@ -59,6 +68,19 @@ except ImportError as e:
 
 # Initialize FastAPI app
 app = FastAPI(title="Alfons Prior Authorization Bot", version="1.0.0")
+
+# Initialize analytics components (add after your existing initializations)
+try:
+    analytics_uploader = HistoricalUploader()
+    mongo_connector = MongoConnector()
+    conversation_analyzer = ConversationAnalyzer()
+    success_predictor = SuccessPredictor()
+    pattern_extractor = PatternExtractor()
+    logger.info("Analytics components initialized")
+except Exception as e:
+    logger.error(f"Failed to initialize analytics components: {e}")
+    analytics_uploader = None
+    mongo_connector = None
 
 # Create static directory if it doesn't exist
 static_dir = "static"
@@ -127,7 +149,7 @@ async def health_check():
         "static_dir_exists": os.path.exists(static_dir),
         "twilio_configured": bool(os.getenv("TWILIO_ACCOUNT_SID")),
         "elevenlabs_configured": bool(os.getenv("ELEVENLABS_API_KEY")),
-        "xai_configured": bool(os.getenv("XAI_API_KEY")),
+        "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
         "supabase_configured": bool(os.getenv("SUPABASE_URL"))
     }
 
@@ -356,6 +378,142 @@ async def voice_webhook(request: Request):
         emergency_twiml.say("I apologize, but I'm experiencing technical difficulties. Please try calling again in a few minutes.")
         
         return Response(content=str(emergency_twiml), media_type="text/xml")
+
+@app.post("/upload-audio")
+async def upload_audio_file(
+    file: UploadFile = File(...),
+    metadata: Optional[str] = Form(None)
+):
+    """Upload historical call audio files for analysis"""
+    if not analytics_uploader:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable")
+    
+    if not file.filename.lower().endswith(('.mp3', '.wav')):
+        raise HTTPException(status_code=400, detail="Only MP3 or WAV files allowed")
+    
+    try:
+        # Save temp file
+        temp_path = f"./temp_uploads/{file.filename}"
+        os.makedirs("./temp_uploads", exist_ok=True)
+        
+        with open(temp_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # Parse metadata
+        meta_dict = {}
+        if metadata:
+            try:
+                meta_dict = json.loads(metadata)
+            except json.JSONDecodeError:
+                pass
+        
+        # Upload and process
+        file_id = analytics_uploader.upload_file(temp_path, meta_dict)
+        
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        
+        logger.info(f"Audio file uploaded successfully: {file_id}")
+        return {"success": True, "file_id": file_id, "message": "Audio uploaded and processing started"}
+        
+    except Exception as e:
+        logger.error(f"Audio upload error: {e}")
+        # Clean up temp file on error
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.get("/analytics-data")
+async def get_analytics_data(limit: int = 20):
+    """Get analytics data from processed calls"""
+    if not mongo_connector:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable")
+    
+    try:
+        # Get recent uploads with processing status
+        uploads = mongo_connector.find_documents("uploads", {}, limit=limit)
+        
+        # Get analytics results
+        analytics = mongo_connector.find_documents("analytics", {}, limit=limit)
+        
+        # Combine data for frontend
+        result = {
+            "uploads": uploads,
+            "analytics": analytics,
+            "summary": {
+                "total_uploads": len(uploads),
+                "processed_count": len([u for u in uploads if u.get("processed", False)]),
+                "success_rate": 0.0  # Calculate from analytics if available
+            }
+        }
+        
+        # Calculate success rate if we have analytics
+        if analytics:
+            success_count = len([a for a in analytics if a.get("outcome") == "success"])
+            result["summary"]["success_rate"] = success_count / len(analytics) if analytics else 0.0
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error fetching analytics data: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch analytics: {str(e)}")
+
+@app.get("/call-patterns")
+async def get_call_patterns(pattern_type: Optional[str] = None):
+    """Get extracted patterns from analyzed calls"""
+    if not mongo_connector:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable")
+    
+    try:
+        query = {}
+        if pattern_type:
+            query = {"patterns.type": pattern_type}
+        
+        # Get patterns from processed calls
+        patterns_data = mongo_connector.find_documents("training_data", query, limit=50)
+        
+        # Extract and format patterns
+        all_patterns = []
+        for item in patterns_data:
+            patterns = item.get("patterns", [])
+            for pattern in patterns:
+                pattern["source_id"] = str(item.get("_id", ""))
+                all_patterns.append(pattern)
+        
+        # Group by type
+        grouped_patterns = {}
+        for pattern in all_patterns:
+            ptype = pattern.get("type", "unknown")
+            if ptype not in grouped_patterns:
+                grouped_patterns[ptype] = []
+            grouped_patterns[ptype].append(pattern)
+        
+        return {
+            "patterns": grouped_patterns,
+            "total_count": len(all_patterns),
+            "types": list(grouped_patterns.keys())
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching call patterns: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch patterns: {str(e)}")
+
+@app.get("/upload-status/{file_id}")
+async def get_upload_status(file_id: str):
+    """Get status of uploaded file processing"""
+    if not analytics_uploader:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable")
+    
+    try:
+        status = analytics_uploader.get_upload_status(file_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="File not found")
+        return status
+    except Exception as e:
+        logger.error(f"Error getting upload status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Error handlers
 @app.exception_handler(Exception)

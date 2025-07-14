@@ -4,7 +4,7 @@ import spacy
 from spacy import Language
 import json
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..transcription.stt_engine import STTEngine  # For reference if needed
 
 logger = logging.getLogger(__name__)

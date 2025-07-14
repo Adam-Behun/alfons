@@ -4,7 +4,7 @@ import pandas as pd
 import json
 from sklearn.model_selection import train_test_split
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..database.mongo_connector import MongoConnector
 from .pattern_extractor import PatternExtractor
 from .script_generator import ScriptGenerator

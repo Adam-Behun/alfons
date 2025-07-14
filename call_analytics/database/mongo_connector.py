@@ -5,7 +5,7 @@ from pymongo.errors import ConnectionFailure, PyMongoError
 from bson.objectid import ObjectId
 from typing import Any, Dict, List, Optional
 
-from config.settings import settings  # Assuming config is in the parent directory or adjusted import path
+from call_analytics.config.settings import settings
 
 # Set up logging
 logger = logging.getLogger(__name__)

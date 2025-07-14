@@ -4,7 +4,7 @@ from typing import Optional
 import os
 import json
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..input_sources.historical_uploader import HistoricalUploader
 
 logger = logging.getLogger(__name__)

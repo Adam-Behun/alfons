@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..database.mongo_connector import MongoConnector
 from ..analytics.success_predictor import SuccessPredictor
 # Import other analyzers as needed, e.g., TimingAnalyzer

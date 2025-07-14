@@ -1,8 +1,9 @@
 import logging
 from typing import Dict, Any, List, Optional
 import datetime
+import json
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..database.mongo_connector import MongoConnector
 from ..database.vector_index import VectorIndex
 from .pattern_extractor import PatternExtractor

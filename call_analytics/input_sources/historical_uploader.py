@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from multiprocessing import Queue  # For queuing; could use celery for production
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from ..database.mongo_connector import MongoConnector
 
 logger = logging.getLogger(__name__)

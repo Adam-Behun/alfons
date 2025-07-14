@@ -4,7 +4,7 @@ from pyannote.audio import Pipeline
 import json
 import torch  # For device management if needed
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

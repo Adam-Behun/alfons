@@ -1,36 +1,35 @@
 import logging
-from typing import Dict, Any, Optional
-import requests
-import json
+from typing import Dict, Any, Optional, List
+import asyncio
+from langchain_openai import ChatOpenAI
 
-from config.settings import settings
-from .pattern_extractor import PatternExtractor  # For integration
+from call_analytics.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class ScriptGenerator:
     """
-    Generates scripts/responses using context-aware LLM prompts.
+    Generates scripts/responses using context-aware OpenAI prompts.
     Uses extracted patterns, conversation context to create optimal responses.
     For agent improvement: generates handling scripts for objections, etc.
     """
     
-    def __init__(self, api_url: str = "https://api.openai.com/v1/chat/completions",  # Placeholder
-                 api_key: Optional[str] = None):
+    def __init__(self):
         """
-        Initialize the generator with LLM API details.
-        
-        :param api_url: LLM API endpoint.
-        :param api_key: API key for authentication.
+        Initialize the generator with OpenAI.
         """
-        self.api_url = api_url
-        self.api_key = api_key or settings.get("LLM_API_KEY", None)
-        if not self.api_key:
-            raise ValueError("LLM API key not provided")
+        if not settings.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not provided")
         
-        logger.info("ScriptGenerator initialized")
+        self.llm = ChatOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            model="gpt-4",
+            temperature=0.5,
+            max_tokens=500
+        )
+        logger.info("ScriptGenerator initialized with OpenAI")
     
-    def generate_script(self, context: str, patterns: Optional[List[Dict[str, Any]]] = None, scenario: str = "objection_handling") -> str:
+    async def generate_script(self, context: str, patterns: Optional[List[Dict[str, Any]]] = None, scenario: str = "objection_handling") -> str:
         """
         Generate a script or response for a given scenario.
         
@@ -42,8 +41,9 @@ class ScriptGenerator:
         prompt = self._build_generation_prompt(context, patterns, scenario)
         
         try:
-            response = self._call_llm(prompt)
-            script = self._parse_llm_response(response)
+            response = await self.llm.agenerate([prompt])
+            result = response.generations[0][0].text
+            script = self._parse_llm_response(result)
             logger.info("Script generated")
             return script
         except Exception as e:
@@ -59,55 +59,66 @@ class ScriptGenerator:
         :param scenario: Scenario type.
         :return: Formatted prompt.
         """
-        patterns_str = json.dumps(patterns, indent=2) if patterns else "No patterns provided."
+        patterns_str = ""
+        if patterns:
+            patterns_str = "Use these successful patterns:\n"
+            for pattern in patterns:
+                patterns_str += f"- {pattern.get('phrase', '')}: {pattern.get('context', '')}\n"
+        else:
+            patterns_str = "No specific patterns provided."
+        
         prompt = f"""
-Generate a script or response for a healthcare prior authorization call.
-Scenario: {scenario}
-Context: {context}
-Use these patterns if relevant: {patterns_str}
+Generate a professional script for a healthcare prior authorization call representative.
 
-Output the script as a string, e.g., "Rep: [response]."
-Make it concise, professional, and effective based on success patterns.
+Scenario: {scenario}
+Context/Objection: {context}
+
+{patterns_str}
+
+Requirements:
+- Be empathetic and professional
+- Address the specific concern directly
+- Use healthcare industry language appropriately
+- Keep response concise (2-3 sentences max)
+- Focus on patient care and medical necessity
+
+Output only the script text that the representative should say, nothing else.
 """
         return prompt
     
-    def _call_llm(self, prompt: str) -> str:
-        """
-        Call the LLM API.
-        
-        :param prompt: Prompt to send.
-        :return: LLM response text.
-        """
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-4",  # Placeholder
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7
-        }
-        
-        response = requests.post(self.api_url, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
-    
     def _parse_llm_response(self, response: str) -> str:
         """
-        Parse the script from LLM response (strip quotes if needed).
+        Parse the script from LLM response (clean and format).
         
         :param response: Raw response string.
         :return: Cleaned script.
         """
-        return response.strip().strip('"')
+        # Clean the response
+        script = response.strip()
+        
+        # Remove quotes if the entire response is quoted
+        if script.startswith('"') and script.endswith('"'):
+            script = script[1:-1]
+        
+        # Remove "Rep:" prefix if present
+        if script.startswith("Rep:"):
+            script = script[4:].strip()
+        
+        return script
+
+# Sync wrapper for backward compatibility
+def generate_script_sync(context: str, patterns: Optional[List[Dict[str, Any]]] = None, scenario: str = "objection_handling") -> str:
+    """Synchronous wrapper for generate_script"""
+    generator = ScriptGenerator()
+    return asyncio.run(generator.generate_script(context, patterns, scenario))
 
 # Example usage (for testing)
 if __name__ == "__main__":
-    generator = ScriptGenerator(api_key="your_api_key_here")
+    generator = ScriptGenerator()
     try:
         mock_context = "Insurance objects to cost."
-        mock_patterns = [{"type": "objection_handling", "phrase": "Discuss assistance programs."}]
-        script = generator.generate_script(mock_context, mock_patterns)
+        mock_patterns = [{"type": "objection_handling", "phrase": "Discuss assistance programs.", "context": "cost concerns", "outcome": "success"}]
+        script = asyncio.run(generator.generate_script(mock_context, mock_patterns))
         print(f"Generated script: {script}")
     except Exception as e:
         print(f"Error: {e}")

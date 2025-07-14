@@ -5,7 +5,7 @@ import numpy as np
 from pymongo import MongoClient
 from pymongo.operations import SearchIndexModel
 
-from config.settings import settings
+from call_analytics.config.settings import settings
 from .mongo_connector import MongoConnector  # Reuse connector for consistency
 
 logger = logging.getLogger(__name__)
