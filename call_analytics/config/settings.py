@@ -33,6 +33,12 @@ class Settings(BaseSettings):
         env="ASSEMBLYAI_API_KEY",
         description="API key for AssemblyAI STT service"
     )
+
+    PYANNOTE_API_KEY: Optional[str] = Field(
+    default=None,
+    env="PYANNOTE_API_KEY",
+    description="Hugging Face token for pyannote.audio authentication"
+    )
     
     # OpenAI Configuration
     OPENAI_API_KEY: Optional[str] = Field(

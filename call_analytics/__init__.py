@@ -15,7 +15,6 @@ from .learning.script_generator import ScriptGenerator
 from .learning.training_pipeline import TrainingPipeline
 from .learning.memory_manager import MemoryManager
 from .database.mongo_connector import MongoConnector
-from .database.sql_models import Base, Recording, Analytic, Pattern  # If SQL is used
 from .database.vector_index import VectorIndex
 from .web_interface.upload_dashboard import run_upload_dashboard
 from .web_interface.analytics_dashboard import run_analytics_dashboard
