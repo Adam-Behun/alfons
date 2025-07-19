@@ -1,243 +1,574 @@
 """
-main.py
-
-This is the entry point for the Alfons backend API, built with FastAPI. 
-
-FastAPI Overview:
-    https://fastapi.tiangolo.com/
-    1. Built on Starlette, .py framework supporting asynchronous programming - multi-tasking, concurrency.
-    2. Pydantic and Type Hints to Auto-Generate OpenAPI Docs (e.g., age: int ensures age is an integer)
-    3. Without type hints, invalid data (e.g., int instead str in Twilio webhook) crash app at runtime
-    4. Async/Await: functions (/voice endpoint) run without blocking other tasks. async def marks a function as asynchronous, and await pauses it until a task (e.g., querying Supabase) completes.
-
-main.py is responsible for setting up the API routes (endpoints) and handling HTTP requests and 
-responses.
-The actual work (business logic)—such as making phone calls, processing messages, 
-transcribing audio, or interacting with the database—is handled by separate Python files 
-(helper modules) like telephony.py, conversation.py, speech.py, and database.py.
+Enhanced main.py with Phase 4 S2S pipeline integration and WebSocket support.
+Maintains backward compatibility while adding real-time speech-to-speech capabilities.
 """
 
 import sys
 import os
 import json
-from typing import Optional
-from fastapi import UploadFile, File, Form
-from fastapi import FastAPI, Request, Form, HTTPException
+import asyncio
+import logging
+from typing import Optional, Dict, Any
+from datetime import datetime
+
+from fastapi import FastAPI, Request, Form, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from twilio.twiml.voice_response import VoiceResponse
-from api.patients import get_patients, get_patient_by_id, update_patient_auth_status, get_pending_authorizations
-import logging
-from typing import Optional
 from dotenv import load_dotenv
+import websockets
 
+# Import Phase 4 components
+from .s2s_pipeline import S2SPipeline, create_s2s_pipeline, CallState
+from .telephony import EnhancedTelephonyService, get_telephony_service
+from .speech import SpeechProcessingRouter, get_speech_router, ProcessingMode
+from .conversation import EnhancedConversationManager, get_conversation_manager, ConversationMode
+
+# Import existing components
+from .database import log_conversation, get_logs
+from .patients import get_patients, get_patient_by_id, update_patient_auth_status, get_pending_authorizations
+
+# Import analytics components
 from call_analytics.input_sources.historical_uploader import HistoricalUploader
 from call_analytics.database.mongo_connector import MongoConnector
 from call_analytics.analytics.conversation_analyzer import ConversationAnalyzer
 from call_analytics.analytics.success_predictor import SuccessPredictor
 from call_analytics.learning.pattern_extractor import PatternExtractor
 
-# Load environment variables first
+from shared.config import config
+from shared.logging_config import get_logger
+
+# Load environment variables
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Import local modules with error handling
-try:
-    from .telephony import make_call
-    from .conversation import process_message
-    from .speech import transcribe_audio, synthesize_speech
-    from .database import log_conversation, get_logs
-except ImportError as e:
-    logger.error(f"Failed to import modules: {e}")
-    # For development, try relative imports
-    try:
-        from telephony import make_call
-        from conversation import process_message
-        from speech import transcribe_audio, synthesize_speech
-        from database import log_conversation, get_logs
-    except ImportError as e2:
-        logger.error(f"Failed relative imports too: {e2}")
-        raise
+logger = get_logger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(title="Alfons Prior Authorization Bot", version="1.0.0")
-
-# Initialize analytics components (add after your existing initializations)
-try:
-    analytics_uploader = HistoricalUploader()
-    mongo_connector = MongoConnector()
-    conversation_analyzer = ConversationAnalyzer()
-    success_predictor = SuccessPredictor()
-    pattern_extractor = PatternExtractor()
-    logger.info("Analytics components initialized")
-except Exception as e:
-    logger.error(f"Failed to initialize analytics components: {e}")
-    analytics_uploader = None
-    mongo_connector = None
-
-# Create static directory if it doesn't exist
-static_dir = "static"
-os.makedirs(static_dir, exist_ok=True)
-
-# Add static file serving
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="Alfons Prior Authorization Bot - Enhanced",
+    version="2.0.0",
+    description="Healthcare prior authorization bot with real-time S2S capabilities"
 )
 
-# Validate required environment variables on startup
-REQUIRED_ENV_VARS = [
-    "TWILIO_ACCOUNT_SID",
-    "TWILIO_AUTH_TOKEN", 
-    "TWILIO_PHONE_NUMBER",
-    "BASE_URL",
-    "ELEVENLABS_API_KEY",
-    "OPENAI_API_KEY",
-    "SUPABASE_URL",
-    "SUPABASE_KEY"
-]
+# Global service instances
+telephony_service: Optional[EnhancedTelephonyService] = None
+speech_router: Optional[SpeechProcessingRouter] = None
+conversation_manager: Optional[EnhancedConversationManager] = None
+s2s_pipeline: Optional[S2SPipeline] = None
+
+# Analytics components
+analytics_uploader: Optional[HistoricalUploader] = None
+mongo_connector: Optional[MongoConnector] = None
+conversation_analyzer: Optional[ConversationAnalyzer] = None
+success_predictor: Optional[SuccessPredictor] = None
+pattern_extractor: Optional[PatternExtractor] = None
+
+# Active WebSocket connections for Media Streams
+active_websockets: Dict[str, WebSocket] = {}
+
 
 @app.on_event("startup")
 async def startup_event():
-    """Validate environment variables on startup"""
-    missing_vars = []
-    for var in REQUIRED_ENV_VARS:
-        if not os.getenv(var):
-            missing_vars.append(var)
+    """Initialize all services and validate configuration on startup."""
+    global telephony_service, speech_router, conversation_manager, s2s_pipeline
+    global analytics_uploader, mongo_connector, conversation_analyzer, success_predictor, pattern_extractor
     
+    logger.info("Starting Alfons Enhanced API...")
+    
+    # Validate required environment variables
+    required_vars = [
+        "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER",
+        "BASE_URL", "OPENAI_API_KEY", "REDIS_URL", "MONGODB_URL"
+    ]
+    
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
     if missing_vars:
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
         raise RuntimeError(f"Missing environment variables: {', '.join(missing_vars)}")
     
-    logger.info("All required environment variables are set")
-    logger.info(f"BASE_URL: {os.getenv('BASE_URL')}")
-    logger.info(f"Static directory created: {os.path.abspath(static_dir)}")
+    try:
+        # Initialize core services
+        telephony_service = EnhancedTelephonyService(enable_streaming=True)
+        speech_router = get_speech_router()
+        conversation_manager = get_conversation_manager()
+        s2s_pipeline = create_s2s_pipeline(enable_rag=True)
+        
+        # Initialize analytics components
+        try:
+            analytics_uploader = HistoricalUploader()
+            mongo_connector = MongoConnector()
+            conversation_analyzer = ConversationAnalyzer()
+            success_predictor = SuccessPredictor()
+            pattern_extractor = PatternExtractor()
+            logger.info("Analytics components initialized")
+        except Exception as e:
+            logger.warning(f"Analytics components failed to initialize: {e}")
+        
+        # Create static directory
+        static_dir = "static"
+        os.makedirs(static_dir, exist_ok=True)
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        
+        # Perform health checks
+        health_checks = await asyncio.gather(
+            telephony_service.get_service_health(),
+            speech_router.health_check(),
+            conversation_manager.health_check(),
+            return_exceptions=True
+        )
+        
+        for i, check in enumerate(health_checks):
+            service_name = ["telephony", "speech", "conversation"][i]
+            if isinstance(check, Exception):
+                logger.warning(f"{service_name} service health check failed: {check}")
+            elif check.get("status") != "healthy":
+                logger.warning(f"{service_name} service status: {check.get('status')}")
+        
+        logger.info("Alfons Enhanced API startup completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Startup failed: {e}")
+        raise
+
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://*.vercel.app"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================================
+# CORE API ENDPOINTS
+# ============================================================================
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
+    """Enhanced root endpoint with Phase 4 capabilities."""
     return {
-        "status": "Alfons API is running",
-        "version": "1.0.0",
+        "status": "Alfons Enhanced API is running",
+        "version": "2.0.0",
+        "capabilities": {
+            "real_time_s2s": True,
+            "batch_processing": True,
+            "speech_analysis": True,
+            "conversation_ai": True,
+            "telephony_integration": True
+        },
         "endpoints": {
-            "trigger_call": "/trigger-call",
-            "voice_webhook": "/voice",
-            "logs": "/logs",
-            "health": "/health"
+            "traditional": {
+                "trigger_call": "/trigger-call",
+                "voice_webhook": "/voice",
+                "logs": "/logs",
+                "patients": "/patients"
+            },
+            "s2s_enhanced": {
+                "trigger_s2s_call": "/s2s/trigger-call",
+                "media_stream": "/ws/media-stream",
+                "conversation": "/conversation",
+                "speech_processing": "/speech/process"
+            },
+            "analytics": {
+                "upload_audio": "/upload-audio",
+                "analytics_data": "/analytics-data",
+                "call_patterns": "/call-patterns"
+            }
         }
     }
 
-@app.get("/health")
-async def health_check():
-    """Detailed health check"""
-    return {
-        "status": "healthy",
-        "base_url": os.getenv("BASE_URL"),
-        "static_dir_exists": os.path.exists(static_dir),
-        "twilio_configured": bool(os.getenv("TWILIO_ACCOUNT_SID")),
-        "elevenlabs_configured": bool(os.getenv("ELEVENLABS_API_KEY")),
-        "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
-        "supabase_configured": bool(os.getenv("SUPABASE_URL"))
-    }
 
-@app.post("/trigger-call")
-async def trigger_call(phone_number: str = Form(...)):
-    """Trigger an outbound call"""
-    logger.info(f"Triggering call to: {phone_number}")
-    
-    # Clean and format phone number
-    cleaned_number = phone_number.strip().replace("-", "").replace("(", "").replace(")", "").replace(" ", "")
-    
-    # Add + prefix if missing and number looks like US format
-    if not cleaned_number.startswith('+'):
-        if len(cleaned_number) == 10:
-            # US number without country code
-            cleaned_number = f"+1{cleaned_number}"
-        elif len(cleaned_number) == 11 and cleaned_number.startswith('1'):
-            # US number with 1 prefix but no +
-            cleaned_number = f"+{cleaned_number}"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid phone number format. Please use +1234567890 or 1234567890")
-    
-    # Basic validation for E.164 format
-    if not cleaned_number.startswith('+') or len(cleaned_number) < 10:
-        raise HTTPException(status_code=400, detail="Phone number must be in E.164 format (+1234567890)")
+@app.get("/health")
+async def enhanced_health_check():
+    """Comprehensive health check for all services."""
+    health_data = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {}
+    }
     
     try:
-        call_sid = make_call(cleaned_number)
-        logger.info(f"Call triggered successfully: {call_sid}")
-        return {"status": "success", "call_sid": call_sid, "phone_number": cleaned_number}
+        # Check core services
+        if telephony_service:
+            health_data["services"]["telephony"] = await telephony_service.get_service_health()
+        
+        if speech_router:
+            health_data["services"]["speech"] = await speech_router.health_check()
+        
+        if conversation_manager:
+            health_data["services"]["conversation"] = await conversation_manager.health_check()
+        
+        # Check environment
+        health_data["services"]["environment"] = {
+            "status": "healthy",
+            "base_url": config.BASE_URL,
+            "static_dir_exists": os.path.exists("static"),
+            "redis_configured": bool(config.REDIS_URL),
+            "mongodb_configured": bool(config.MONGODB_URL)
+        }
+        
+        # Determine overall status
+        service_statuses = [svc.get("status", "unknown") for svc in health_data["services"].values()]
+        if "unhealthy" in service_statuses:
+            health_data["status"] = "unhealthy"
+        elif "degraded" in service_statuses:
+            health_data["status"] = "degraded"
+        
     except Exception as e:
-        logger.error(f"Error triggering call: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to trigger call: {str(e)}")
+        logger.error(f"Health check failed: {e}")
+        health_data["status"] = "unhealthy"
+        health_data["error"] = str(e)
+    
+    return health_data
+
+
+# ============================================================================
+# ENHANCED S2S ENDPOINTS
+# ============================================================================
+
+@app.post("/s2s/trigger-call")
+async def trigger_s2s_call(
+    phone_number: str = Form(...),
+    use_streaming: bool = Form(True),
+    context: Optional[str] = Form(None)
+):
+    """Trigger enhanced S2S call with real-time capabilities."""
+    logger.info(f"Triggering S2S call to: {phone_number}")
+    
+    try:
+        # Parse context if provided
+        call_context = {}
+        if context:
+            try:
+                call_context = json.loads(context)
+            except json.JSONDecodeError:
+                logger.warning("Invalid context JSON, using empty context")
+        
+        # Add S2S-specific context
+        call_context.update({
+            "s2s_enabled": True,
+            "streaming": use_streaming,
+            "call_type": "prior_authorization",
+            "initiated_by": "api"
+        })
+        
+        # Trigger call through enhanced telephony service
+        call_sid = telephony_service.make_call(
+            phone_number=phone_number,
+            use_streaming=use_streaming,
+            call_context=call_context
+        )
+        
+        return {
+            "status": "success",
+            "call_sid": call_sid,
+            "phone_number": phone_number,
+            "streaming_enabled": use_streaming,
+            "capabilities": {
+                "real_time_response": use_streaming,
+                "conversation_ai": True,
+                "rag_enhanced": True
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"S2S call trigger failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger S2S call: {str(e)}")
+
+
+@app.websocket("/ws/media-stream")
+async def media_stream_websocket(websocket: WebSocket):
+    """WebSocket endpoint for Twilio Media Streams - handles real-time audio."""
+    await websocket.accept()
+    stream_id = None
+    
+    try:
+        logger.info("Media Stream WebSocket connection established")
+        
+        # Use telephony service's stream handler
+        if telephony_service and telephony_service.stream_handler:
+            await telephony_service.stream_handler.handle_stream_connection(
+                websocket, websocket.url.path
+            )
+        else:
+            logger.error("Stream handler not available")
+            await websocket.close(code=1011, reason="Stream handler unavailable")
+            
+    except WebSocketDisconnect:
+        logger.info(f"Media Stream WebSocket disconnected: {stream_id}")
+    except Exception as e:
+        logger.error(f"Media Stream WebSocket error: {e}")
+        try:
+            await websocket.close(code=1011, reason=str(e))
+        except:
+            pass
+
+
+@app.post("/conversation/process")
+async def process_conversation_message(
+    conversation_id: str = Form(...),
+    message: str = Form(...),
+    mode: str = Form("text"),
+    call_sid: Optional[str] = Form(None)
+):
+    """Process conversation message with enhanced state management."""
+    try:
+        # Convert mode string to enum
+        conv_mode = ConversationMode(mode)
+        
+        # Process message through conversation manager
+        response, extracted_data = await conversation_manager.process_message(
+            conversation_id=conversation_id,
+            message=message,
+            mode=conv_mode,
+            call_sid=call_sid
+        )
+        
+        return {
+            "status": "success",
+            "response": response,
+            "extracted_data": extracted_data,
+            "conversation_id": conversation_id,
+            "processing_mode": mode
+        }
+        
+    except Exception as e:
+        logger.error(f"Conversation processing failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@app.get("/conversation/{conversation_id}/summary")
+async def get_conversation_summary(conversation_id: str):
+    """Get comprehensive conversation summary."""
+    try:
+        summary = await conversation_manager.get_conversation_summary(conversation_id)
+        return summary
+    except Exception as e:
+        logger.error(f"Failed to get conversation summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/speech/process")
+async def process_speech(
+    audio: UploadFile = File(...),
+    mode: str = Form("auto"),
+    context: Optional[str] = Form(None)
+):
+    """Process speech through unified speech router."""
+    try:
+        # Parse context
+        speech_context = {}
+        if context:
+            try:
+                speech_context = json.loads(context)
+            except json.JSONDecodeError:
+                pass
+        
+        # Convert mode string to enum
+        processing_mode = ProcessingMode(mode)
+        
+        # Read audio file
+        audio_content = await audio.read()
+        
+        # Process through speech router
+        result = await speech_router.process_speech(
+            audio_input=audio_content,
+            mode=processing_mode,
+            context=speech_context
+        )
+        
+        return {
+            "status": "success",
+            "result": result,
+            "processing_mode": mode,
+            "filename": audio.filename
+        }
+        
+    except Exception as e:
+        logger.error(f"Speech processing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# TRADITIONAL TELEPHONY ENDPOINTS (BACKWARD COMPATIBILITY)
+# ============================================================================
+
+@app.post("/trigger-call")
+async def trigger_traditional_call(phone_number: str = Form(...)):
+    """Traditional call trigger (backward compatibility)."""
+    logger.info(f"Triggering traditional call to: {phone_number}")
+    
+    try:
+        # Use traditional webhook-based calling
+        call_sid = telephony_service.make_call(
+            phone_number=phone_number,
+            use_streaming=False  # Traditional mode
+        )
+        
+        return {
+            "status": "success",
+            "call_sid": call_sid,
+            "phone_number": phone_number,
+            "mode": "traditional"
+        }
+        
+    except Exception as e:
+        logger.error(f"Traditional call trigger failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/voice")
+async def voice_get():
+    """Voice webhook GET endpoint for verification."""
+    return {
+        "status": "Voice webhook is accessible",
+        "message": "This endpoint handles Twilio voice webhooks via POST",
+        "enhanced_features": {
+            "s2s_streaming": True,
+            "conversation_ai": True,
+            "rag_integration": True
+        }
+    }
+
+
+@app.post("/voice")
+async def voice_webhook(request: Request):
+    """Enhanced voice webhook supporting both traditional and streaming modes."""
+    logger.info("ENHANCED VOICE WEBHOOK CALLED")
+    
+    try:
+        form = await request.form()
+        form_dict = dict(form)
+        logger.info(f"Voice webhook form data: {form_dict}")
+        
+        call_sid = form.get("CallSid")
+        audio_url = form.get("RecordingUrl")
+        call_status = form.get("CallStatus")
+        
+        # Check if this call should use streaming
+        call_info = telephony_service.get_call_status(call_sid) if call_sid else None
+        use_streaming = call_info.get("use_streaming", False) if call_info else False
+        
+        # Route to appropriate handler
+        if use_streaming:
+            # Generate TwiML for streaming-enabled calls
+            twiml_response = telephony_service.generate_streaming_twiml(call_sid)
+        else:
+            # Handle traditional webhook processing
+            if audio_url:
+                # Process recorded audio through speech router
+                result = await speech_router.process_speech(
+                    audio_input=audio_url,
+                    mode=ProcessingMode.BATCH,
+                    context={"call_sid": call_sid, "legacy_mode": True}
+                )
+                
+                transcript = result.get("transcript", "")
+                
+                # Process through conversation manager
+                conversation_id = f"call_{call_sid}"
+                response_text, extracted_data = await conversation_manager.process_message(
+                    conversation_id=conversation_id,
+                    message=transcript,
+                    mode=ConversationMode.TEXT,
+                    call_sid=call_sid
+                )
+                
+                # Generate TwiML response
+                twiml_response = telephony_service.generate_webhook_twiml(call_sid, audio_url)
+                
+                # Log conversation
+                await log_conversation(call_sid, transcript, response_text, extracted_data)
+            else:
+                # Initial call setup
+                twiml_response = telephony_service.generate_webhook_twiml(call_sid)
+        
+        return Response(content=twiml_response, media_type="text/xml")
+        
+    except Exception as e:
+        logger.error(f"Voice webhook error: {e}")
+        
+        # Emergency fallback TwiML
+        emergency_twiml = VoiceResponse()
+        emergency_twiml.say("I apologize, but I'm experiencing technical difficulties. Please try calling again in a few minutes.")
+        return Response(content=str(emergency_twiml), media_type="text/xml")
+
+
+@app.post("/voice/streaming")
+async def voice_streaming_webhook(request: Request):
+    """Voice webhook specifically for streaming-enabled calls."""
+    logger.info("STREAMING VOICE WEBHOOK CALLED")
+    
+    try:
+        form = await request.form()
+        call_sid = form.get("CallSid")
+        
+        if call_sid:
+            # Handle call status updates for streaming calls
+            await telephony_service.handle_call_status_update(
+                call_sid, form.get("CallStatus", "unknown"), **dict(form)
+            )
+        
+        # Generate streaming TwiML
+        twiml_response = telephony_service.generate_streaming_twiml(call_sid)
+        return Response(content=twiml_response, media_type="text/xml")
+        
+    except Exception as e:
+        logger.error(f"Streaming voice webhook error: {e}")
+        emergency_twiml = VoiceResponse()
+        emergency_twiml.say("I'm sorry, there was an issue with the streaming connection.")
+        return Response(content=str(emergency_twiml), media_type="text/xml")
+
+
+# ============================================================================
+# DATA AND ANALYTICS ENDPOINTS
+# ============================================================================
 
 @app.get("/logs")
 async def fetch_logs():
-    """Fetch conversation logs"""
+    """Fetch conversation logs (backward compatibility)."""
     try:
         logs = await get_logs()
         logger.info(f"Fetched {len(logs)} logs")
         return logs
     except Exception as e:
-        logger.error(f"Error fetching logs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch logs: {str(e)}")
+        logger.error(f"Error fetching logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/patients")
 async def fetch_patients():
-    """Fetch all patients requiring prior authorization"""
+    """Fetch all patients requiring prior authorization."""
     try:
         patients = await get_patients()
         logger.info(f"Fetched {len(patients)} patients")
         return patients
     except Exception as e:
-        logger.error(f"Error fetching patients: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch patients: {str(e)}")
+        logger.error(f"Error fetching patients: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/patients/{patient_id}")
 async def get_patient_details(patient_id: int):
-    """Fetch details for a specific patient by ID"""
+    """Fetch details for a specific patient by ID."""
     try:
         patient = await get_patient_by_id(patient_id)
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
-        logger.info(f"Fetched details for patient {patient_id}")
         return patient
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching patient {patient_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch patient details: {str(e)}")
+        logger.error(f"Error fetching patient {patient_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/patients/{patient_id}")
-async def fetch_patient(patient_id: int):
-    """Fetch a specific patient by ID"""
-    try:
-        patient = await get_patient_by_id(patient_id)
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-        return patient
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching patient {patient_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch patient: {str(e)}")
 
 @app.put("/patients/{patient_id}/auth-status")
 async def update_auth_status(patient_id: int, status: str = Form(...)):
-    """Update prior authorization status for a patient"""
+    """Update prior authorization status for a patient."""
     try:
         valid_statuses = ["Pending", "Approved", "Denied", "Under Review"]
         if status not in valid_statuses:
@@ -249,147 +580,21 @@ async def update_auth_status(patient_id: int, status: str = Form(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating patient {patient_id} auth status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to update auth status: {str(e)}")
+        logger.error(f"Error updating patient {patient_id} auth status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/patients/pending")
-async def fetch_pending_authorizations():
-    """Fetch all patients with pending prior authorization"""
-    try:
-        patients = await get_pending_authorizations()
-        logger.info(f"Fetched {len(patients)} pending authorizations")
-        return patients
-    except Exception as e:
-        logger.error(f"Error fetching pending authorizations: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch pending authorizations: {str(e)}")
-
-
-@app.get("/voice")
-async def voice_get():
-    """Test endpoint to verify webhook is accessible"""
-    return {
-        "status": "Voice webhook is accessible",
-        "message": "This endpoint handles Twilio voice webhooks via POST"
-    }
-
-@app.post("/voice")
-async def voice_webhook(request: Request):
-    """
-    Webhook endpoint for Twilio to handle voice call events.
-    This is the main entry point for all voice interactions.
-    """
-    logger.info("VOICE WEBHOOK CALLED")
-    
-    try:
-        # Parse form data from Twilio
-        form = await request.form()
-        form_dict = dict(form)
-        logger.info(f"Form data received: {form_dict}")
-        
-        call_sid = form.get("CallSid")
-        audio_url = form.get("RecordingUrl")
-        call_status = form.get("CallStatus")
-        
-        logger.info(f"Call SID: {call_sid}")
-        logger.info(f"Audio URL: {audio_url}")
-        logger.info(f"Call Status: {call_status}")
-
-        # Create TwiML response
-        twiml = VoiceResponse()
-
-        if audio_url:
-            # We have a recording to process
-            logger.info("Processing audio recording...")
-            
-            try:
-                # Step 1: Transcribe the audio
-                logger.info("Transcribing audio...")
-                transcription = await transcribe_audio(audio_url)
-                logger.info(f"Transcription: {transcription}")
-                
-                if transcription == "[Error during transcription]":
-                    twiml.say("I'm sorry, I couldn't understand your response. Please try again.")
-                    twiml.record(action=f"{os.getenv('BASE_URL')}/voice", maxLength="30", playBeep=True)
-                    return Response(content=str(twiml), media_type="text/xml")
-                
-                # Step 2: Process the message with AI
-                logger.info("Processing message with AI...")
-                response_text, extracted_data = await process_message(transcription)
-                logger.info(f"Bot response: {response_text}")
-                logger.info(f"Extracted data: {extracted_data}")
-                
-                # Step 3: Check if we need to escalate
-                if extracted_data.get("escalate", False):
-                    logger.info("Escalating to human...")
-                    human_number = os.getenv("HUMAN_ESCALATION_NUMBER")
-                    if human_number:
-                        twiml.say("I'm transferring you to a human representative. Please hold.")
-                        twiml.dial(human_number)
-                    else:
-                        twiml.say("I'd like to transfer you to a human representative, but none are available right now. Please call back later.")
-                    
-                    await log_conversation(call_sid, transcription, response_text, extracted_data, escalated=True)
-                else:
-                    # Step 4: Generate speech response
-                    logger.info("Generating speech response...")
-                    speech_url = await synthesize_speech(response_text)
-                    
-                    if speech_url:
-                        logger.info(f"Playing generated speech: {speech_url}")
-                        twiml.play(speech_url)
-                    else:
-                        logger.info("Using TTS fallback")
-                        twiml.say(response_text)
-                    
-                    # Continue conversation
-                    twiml.pause(length=1)
-                    twiml.say("Is there anything else I can help you with?")
-                    twiml.record(action=f"{os.getenv('BASE_URL')}/voice", maxLength="30", playBeep=True)
-                    
-                    await log_conversation(call_sid, transcription, response_text, extracted_data)
-                
-            except Exception as e:
-                logger.error(f"Error processing audio: {str(e)}")
-                twiml.say("I'm sorry, I'm having trouble processing your request. Let me try again.")
-                twiml.record(action=f"{os.getenv('BASE_URL')}/voice", maxLength="30", playBeep=True)
-        
-        else:
-            # Initial call - no recording yet
-            logger.info("Initial call - prompting for input...")
-            twiml.say("Hi, this is Jessica. I'm calling to verify eligibility and benefits for a patient.")
-            
-            action_url = f"{os.getenv('BASE_URL')}/voice"
-            logger.info(f"Using action URL: {action_url}")
-            
-            twiml.record(action=action_url, maxLength="30", playBeep=True)
-        
-        twiml_str = str(twiml)
-        logger.info(f"Returning TwiML: {twiml_str}")
-        
-        # Return proper XML response for Twilio
-        return Response(content=twiml_str, media_type="text/xml")
-        
-    except Exception as e:
-        logger.error(f"Critical error in voice webhook: {str(e)}")
-        logger.error(f"Error type: {type(e).__name__}")
-        
-        # Always return valid TwiML to prevent Twilio errors
-        emergency_twiml = VoiceResponse()
-        emergency_twiml.say("I apologize, but I'm experiencing technical difficulties. Please try calling again in a few minutes.")
-        
-        return Response(content=str(emergency_twiml), media_type="text/xml")
 
 @app.post("/upload-audio")
 async def upload_audio_file(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None)
 ):
-    """Upload historical call audio files for analysis"""
+    """Upload historical call audio files for analysis."""
     if not analytics_uploader:
         raise HTTPException(status_code=503, detail="Analytics service unavailable")
     
-    if not file.filename.lower().endswith(('.mp3', '.wav')):
-        raise HTTPException(status_code=400, detail="Only MP3 or WAV files allowed")
+    if not file.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
+        raise HTTPException(status_code=400, detail="Only MP3, WAV, or M4A files allowed")
     
     try:
         # Save temp file
@@ -406,7 +611,11 @@ async def upload_audio_file(
             try:
                 meta_dict = json.loads(metadata)
             except json.JSONDecodeError:
-                pass
+                logger.warning("Invalid metadata JSON")
+        
+        # Add processing timestamp
+        meta_dict["uploaded_at"] = datetime.utcnow().isoformat()
+        meta_dict["file_size"] = len(content)
         
         # Upload and process
         file_id = analytics_uploader.upload_file(temp_path, meta_dict)
@@ -416,53 +625,58 @@ async def upload_audio_file(
             os.remove(temp_path)
         
         logger.info(f"Audio file uploaded successfully: {file_id}")
-        return {"success": True, "file_id": file_id, "message": "Audio uploaded and processing started"}
+        return {
+            "success": True,
+            "file_id": file_id,
+            "message": "Audio uploaded and processing started",
+            "metadata": meta_dict
+        }
         
     except Exception as e:
         logger.error(f"Audio upload error: {e}")
         # Clean up temp file on error
         if 'temp_path' in locals() and os.path.exists(temp_path):
             os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/analytics-data")
 async def get_analytics_data(limit: int = 20):
-    """Get analytics data from processed calls"""
+    """Get analytics data from processed calls."""
     if not mongo_connector:
         raise HTTPException(status_code=503, detail="Analytics service unavailable")
     
     try:
         # Get recent uploads with processing status
         uploads = mongo_connector.find_documents("uploads", {}, limit=limit)
-        
-        # Get analytics results
         analytics = mongo_connector.find_documents("analytics", {}, limit=limit)
         
-        # Combine data for frontend
-        result = {
+        # Calculate summary statistics
+        total_uploads = len(uploads)
+        processed_count = len([u for u in uploads if u.get("processed", False)])
+        success_count = len([a for a in analytics if a.get("outcome") == "success"]) if analytics else 0
+        success_rate = success_count / len(analytics) if analytics else 0.0
+        
+        return {
             "uploads": uploads,
             "analytics": analytics,
             "summary": {
-                "total_uploads": len(uploads),
-                "processed_count": len([u for u in uploads if u.get("processed", False)]),
-                "success_rate": 0.0  # Calculate from analytics if available
-            }
+                "total_uploads": total_uploads,
+                "processed_count": processed_count,
+                "success_rate": success_rate,
+                "processing_rate": processed_count / total_uploads if total_uploads > 0 else 0.0
+            },
+            "timestamp": datetime.utcnow().isoformat()
         }
-        
-        # Calculate success rate if we have analytics
-        if analytics:
-            success_count = len([a for a in analytics if a.get("outcome") == "success"])
-            result["summary"]["success_rate"] = success_count / len(analytics) if analytics else 0.0
-        
-        return result
         
     except Exception as e:
         logger.error(f"Error fetching analytics data: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch analytics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/call-patterns")
-async def get_call_patterns(pattern_type: Optional[str] = None):
-    """Get extracted patterns from analyzed calls"""
+async def get_call_patterns(pattern_type: Optional[str] = None, limit: int = 50):
+    """Get extracted patterns from analyzed calls."""
     if not mongo_connector:
         raise HTTPException(status_code=503, detail="Analytics service unavailable")
     
@@ -471,8 +685,7 @@ async def get_call_patterns(pattern_type: Optional[str] = None):
         if pattern_type:
             query = {"patterns.type": pattern_type}
         
-        # Get patterns from processed calls
-        patterns_data = mongo_connector.find_documents("training_data", query, limit=50)
+        patterns_data = mongo_connector.find_documents("training_data", query, limit=limit)
         
         # Extract and format patterns
         all_patterns = []
@@ -480,6 +693,7 @@ async def get_call_patterns(pattern_type: Optional[str] = None):
             patterns = item.get("patterns", [])
             for pattern in patterns:
                 pattern["source_id"] = str(item.get("_id", ""))
+                pattern["created_at"] = item.get("created_at", "")
                 all_patterns.append(pattern)
         
         # Group by type
@@ -493,34 +707,84 @@ async def get_call_patterns(pattern_type: Optional[str] = None):
         return {
             "patterns": grouped_patterns,
             "total_count": len(all_patterns),
-            "types": list(grouped_patterns.keys())
+            "types": list(grouped_patterns.keys()),
+            "timestamp": datetime.utcnow().isoformat()
         }
         
     except Exception as e:
         logger.error(f"Error fetching call patterns: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch patterns: {str(e)}")
-
-@app.get("/upload-status/{file_id}")
-async def get_upload_status(file_id: str):
-    """Get status of uploaded file processing"""
-    if not analytics_uploader:
-        raise HTTPException(status_code=503, detail="Analytics service unavailable")
-    
-    try:
-        status = analytics_uploader.get_upload_status(file_id)
-        if not status:
-            raise HTTPException(status_code=404, detail="File not found")
-        return status
-    except Exception as e:
-        logger.error(f"Error getting upload status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Error handlers
+
+# ============================================================================
+# MONITORING AND STATUS ENDPOINTS
+# ============================================================================
+
+@app.get("/status/calls")
+async def get_active_calls():
+    """Get status of active calls."""
+    try:
+        active_calls = telephony_service.get_active_calls() if telephony_service else []
+        return {
+            "active_calls": active_calls,
+            "count": len(active_calls),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting active calls: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/status/speech")
+async def get_speech_processing_stats():
+    """Get speech processing statistics."""
+    try:
+        stats = speech_router.get_processing_stats() if speech_router else {}
+        return {
+            "stats": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting speech stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/status/websockets")
+async def get_websocket_status():
+    """Get WebSocket connection status."""
+    return {
+        "active_connections": len(active_websockets),
+        "connection_ids": list(active_websockets.keys()),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception: {str(exc)}")
-    return {"error": "Internal server error", "detail": str(exc)}
+    """Global exception handler with enhanced logging."""
+    logger.error(f"Global exception on {request.url}: {str(exc)}")
+    logger.error(f"Exception type: {type(exc).__name__}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": str(exc),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=8000,
+        log_level="info",
+        access_log=True
+    )
