@@ -2,6 +2,12 @@
 // Allows uploading historical calls and viewing analytics data
 
 import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Upload, BarChart3, Zap, FileAudio, Loader2, RefreshCw, TrendingUp, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { cn, formatDate } from '@/lib/utils';
 
 interface UploadedFile {
   _id: string;
@@ -43,7 +49,6 @@ export default function CallAnalytics() {
   const [patternsData, setPatternsData] = useState<PatternsData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Fetch analytics data
   const fetchAnalyticsData = async () => {
     setIsLoading(true);
     try {
@@ -59,7 +64,6 @@ export default function CallAnalytics() {
     }
   };
 
-  // Fetch patterns data
   const fetchPatternsData = async () => {
     setIsLoading(true);
     try {
@@ -75,7 +79,6 @@ export default function CallAnalytics() {
     }
   };
 
-  // Handle file upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -91,7 +94,6 @@ export default function CallAnalytics() {
     const formData = new FormData();
     formData.append('file', file);
     
-    // Add metadata
     const metadata = {
       participants: 'rep, insurance',
       outcome: 'pending',
@@ -108,7 +110,6 @@ export default function CallAnalytics() {
       if (response.ok) {
         const result = await response.json();
         setUploadStatus(`Upload successful! File ID: ${result.file_id}`);
-        // Refresh analytics data
         if (activeTab === 'analytics') {
           fetchAnalyticsData();
         }
@@ -120,12 +121,10 @@ export default function CallAnalytics() {
       setUploadStatus('Upload failed: Network error');
     } finally {
       setIsUploading(false);
-      // Clear file input
       event.target.value = '';
     }
   };
 
-  // Load data when tab changes
   useEffect(() => {
     if (activeTab === 'analytics') {
       fetchAnalyticsData();
@@ -134,394 +133,305 @@ export default function CallAnalytics() {
     }
   }, [activeTab]);
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
-  };
-
-  const getStatusColor = (status: string) => {
+  const getStatusIcon = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'success': return '#10b981';
-      case 'failure': return '#ef4444';
-      case 'pending': return '#f59e0b';
-      default: return '#6b7280';
+      case 'success':
+      case 'approved':
+        return <CheckCircle className="w-4 h-4 text-green-600" />;
+      case 'failure':
+      case 'denied':
+        return <XCircle className="w-4 h-4 text-red-600" />;
+      case 'pending':
+        return <Clock className="w-4 h-4 text-amber-600" />;
+      default:
+        return <Clock className="w-4 h-4 text-gray-600" />;
     }
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <div style={{
-        padding: '24px',
-        borderBottom: '1px solid #e5e7eb',
-        background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-        color: 'white'
-      }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: '0 0 4px 0' }}>
-          Call Analytics
-        </h2>
-        <p style={{ fontSize: '0.9rem', opacity: 0.9, margin: 0 }}>
-          Upload and analyze historical prior authorization calls
-        </p>
-      </div>
+    <div className="space-y-6">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="upload" className="gap-2">
+            <Upload className="w-4 h-4" />
+            Upload
+          </TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-2">
+            <BarChart3 className="w-4 h-4" />
+            Analytics
+          </TabsTrigger>
+          <TabsTrigger value="patterns" className="gap-2">
+            <Zap className="w-4 h-4" />
+            Patterns
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Tab Navigation */}
-      <div style={{
-        padding: '0 24px',
-        borderBottom: '1px solid #e5e7eb',
-        background: '#f9fafb',
-        display: 'flex',
-        gap: '16px'
-      }}>
-        {(['upload', 'analytics', 'patterns'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: '12px 16px',
-              border: 'none',
-              background: 'none',
-              borderBottom: activeTab === tab ? '2px solid #8b5cf6' : '2px solid transparent',
-              color: activeTab === tab ? '#8b5cf6' : '#6b7280',
-              fontWeight: activeTab === tab ? '600' : '400',
-              cursor: 'pointer',
-              textTransform: 'capitalize',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Content */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
-        {/* Upload Tab */}
-        {activeTab === 'upload' && (
-          <div style={{ maxWidth: '600px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '16px', color: '#1f2937' }}>
-              Upload Historical Call Recording
-            </h3>
-            
-            <div style={{
-              border: '2px dashed #d1d5db',
-              borderRadius: '12px',
-              padding: '40px',
-              textAlign: 'center',
-              background: '#f9fafb'
-            }}>
-              <div style={{ marginBottom: '16px' }}>
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="1.5" style={{ margin: '0 auto' }}>
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7,10 12,15 17,10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-              </div>
-              
-              <input
-                type="file"
-                accept=".mp3,.wav"
-                onChange={handleFileUpload}
-                disabled={isUploading}
-                style={{
-                  width: '100%',
-                  padding: '8px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  marginBottom: '12px'
-                }}
-              />
-              
-              <p style={{ fontSize: '0.9rem', color: '#6b7280', margin: '0 0 8px 0' }}>
-                Select MP3 or WAV file to upload
-              </p>
-              
-              <p style={{ fontSize: '0.8rem', color: '#9ca3af', margin: 0 }}>
-                Audio will be analyzed for patterns, success factors, and conversation flow
-              </p>
-            </div>
-
-            {uploadStatus && (
-              <div style={{
-                marginTop: '16px',
-                padding: '12px',
-                borderRadius: '8px',
-                background: uploadStatus.includes('successful') ? '#d1fae5' : '#fee2e2',
-                color: uploadStatus.includes('successful') ? '#065f46' : '#991b1b',
-                fontSize: '0.9rem'
-              }}>
-                {uploadStatus}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Analytics Tab */}
-        {activeTab === 'analytics' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '600', margin: 0, color: '#1f2937' }}>
-                Call Analytics Dashboard
-              </h3>
-              <button
-                onClick={fetchAnalyticsData}
-                disabled={isLoading}
-                style={{
-                  padding: '8px 16px',
-                  background: '#8b5cf6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem'
-                }}
-              >
-                {isLoading ? 'Loading...' : 'Refresh'}
-              </button>
-            </div>
-
-            {analyticsData && (
-              <>
-                {/* Summary Cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-                  <div style={{
-                    background: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    padding: '20px',
-                    textAlign: 'center'
-                  }}>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#8b5cf6' }}>
-                      {analyticsData.summary.total_uploads}
-                    </div>
-                    <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>Total Uploads</div>
-                  </div>
-                  
-                  <div style={{
-                    background: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    padding: '20px',
-                    textAlign: 'center'
-                  }}>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#10b981' }}>
-                      {analyticsData.summary.processed_count}
-                    </div>
-                    <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>Processed</div>
-                  </div>
-                  
-                  <div style={{
-                    background: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    padding: '20px',
-                    textAlign: 'center'
-                  }}>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#f59e0b' }}>
-                      {Math.round(analyticsData.summary.success_rate * 100)}%
-                    </div>
-                    <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>Success Rate</div>
-                  </div>
+        <TabsContent value="upload" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileAudio className="w-5 h-5 text-primary" />
+                Upload Historical Call Recording
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center space-y-4">
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto">
+                  <Upload className="w-6 h-6 text-primary" />
+                </div>
+                
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Upload Audio File</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Select MP3 or WAV file to upload for analysis
+                  </p>
                 </div>
 
-                {/* Uploads Table */}
-                <div style={{
-                  background: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  overflow: 'hidden'
-                }}>
-                  <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
-                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>Recent Uploads</h4>
-                  </div>
+                <div className="space-y-4">
+                  <input
+                    type="file"
+                    accept=".mp3,.wav"
+                    onChange={handleFileUpload}
+                    disabled={isUploading}
+                    className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+                  />
                   
-                  {analyticsData.uploads.length > 0 ? (
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', fontSize: '0.9rem' }}>
-                        <thead>
-                          <tr style={{ background: '#f9fafb' }}>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>File Name</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Upload Date</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Status</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>Outcome</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {analyticsData.uploads.map((upload, index) => (
-                            <tr key={upload._id || index}>
-                              <td style={{ padding: '12px', borderBottom: '1px solid #f3f4f6' }}>
-                                {upload.original_name}
-                              </td>
-                              <td style={{ padding: '12px', borderBottom: '1px solid #f3f4f6' }}>
-                                {formatDate(upload.upload_date)}
-                              </td>
-                              <td style={{ padding: '12px', borderBottom: '1px solid #f3f4f6' }}>
-                                <span style={{
-                                  padding: '4px 8px',
-                                  borderRadius: '12px',
-                                  fontSize: '0.8rem',
-                                  background: upload.processed ? '#d1fae5' : '#fef3c7',
-                                  color: upload.processed ? '#065f46' : '#92400e'
-                                }}>
-                                  {upload.processed ? 'Processed' : 'Processing'}
-                                </span>
-                              </td>
-                              <td style={{ padding: '12px', borderBottom: '1px solid #f3f4f6' }}>
-                                {upload.outcome && (
-                                  <span style={{
-                                    padding: '4px 8px',
-                                    borderRadius: '12px',
-                                    fontSize: '0.8rem',
-                                    background: upload.outcome === 'success' ? '#d1fae5' : '#fee2e2',
-                                    color: upload.outcome === 'success' ? '#065f46' : '#991b1b'
-                                  }}>
-                                    {upload.outcome}
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
-                      No uploads found. Upload some call recordings to see analytics.
+                  {isUploading && (
+                    <div className="flex items-center gap-2 justify-center">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-sm">Processing upload...</span>
                     </div>
                   )}
                 </div>
-              </>
-            )}
-          </div>
-        )}
 
-        {/* Patterns Tab */}
-        {activeTab === 'patterns' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '600', margin: 0, color: '#1f2937' }}>
-                Extracted Call Patterns
-              </h3>
-              <button
-                onClick={fetchPatternsData}
-                disabled={isLoading}
-                style={{
-                  padding: '8px 16px',
-                  background: '#8b5cf6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem'
-                }}
-              >
-                {isLoading ? 'Loading...' : 'Refresh'}
-              </button>
-            </div>
+                <p className="text-xs text-muted-foreground">
+                  Audio will be analyzed for patterns, success factors, and conversation flow
+                </p>
+              </div>
 
-            {patternsData && patternsData.total_count > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                {/* Summary */}
-                <div style={{
-                  background: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  padding: '16px'
-                }}>
-                  <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>
-                    Found <strong>{patternsData.total_count}</strong> patterns across <strong>{patternsData.types.length}</strong> categories
-                  </div>
+              {uploadStatus && (
+                <div className={cn(
+                  "mt-4 p-3 rounded-md text-sm",
+                  uploadStatus.includes('successful') 
+                    ? "bg-green-50 text-green-800 border border-green-200" 
+                    : "bg-red-50 text-red-800 border border-red-200"
+                )}>
+                  {uploadStatus}
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-                {/* Pattern Groups */}
-                {Object.entries(patternsData.patterns).map(([type, patterns]) => (
-                  <div key={type} style={{
-                    background: 'white',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    overflow: 'hidden'
-                  }}>
-                    <div style={{
-                      padding: '16px',
-                      borderBottom: '1px solid #e5e7eb',
-                      background: '#f9fafb'
-                    }}>
-                      <h4 style={{
-                        margin: 0,
-                        fontSize: '1rem',
-                        fontWeight: '600',
-                        textTransform: 'capitalize',
-                        color: '#1f2937'
-                      }}>
-                        {type.replace('_', ' ')} ({patterns.length})
-                      </h4>
+        <TabsContent value="analytics" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold">Analytics Dashboard</h2>
+            <Button 
+              onClick={fetchAnalyticsData} 
+              disabled={isLoading}
+              variant="outline"
+              className="gap-2"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Refresh
+            </Button>
+          </div>
+
+          {analyticsData && (
+            <>
+              {/* Summary Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card>
+                  <CardContent className="p-6">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <FileAudio className="w-5 h-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-blue-600">
+                          {analyticsData.summary.total_uploads}
+                        </p>
+                        <p className="text-sm text-muted-foreground">Total Uploads</p>
+                      </div>
                     </div>
-                    
-                    <div style={{ padding: '16px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardContent className="p-6">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-green-600">
+                          {analyticsData.summary.processed_count}
+                        </p>
+                        <p className="text-sm text-muted-foreground">Processed</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardContent className="p-6">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                        <TrendingUp className="w-5 h-5 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-amber-600">
+                          {Math.round(analyticsData.summary.success_rate * 100)}%
+                        </p>
+                        <p className="text-sm text-muted-foreground">Success Rate</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Uploads Table */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recent Uploads</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {analyticsData.uploads.length > 0 ? (
+                    <div className="space-y-3">
+                      {analyticsData.uploads.map((upload, index) => (
+                        <div key={upload._id || index} className="flex items-center justify-between p-4 border rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <FileAudio className="w-4 h-4 text-muted-foreground" />
+                            <div>
+                              <p className="font-medium">{upload.original_name}</p>
+                              <p className="text-sm text-muted-foreground">
+                                Uploaded {formatDate(upload.upload_date)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-3">
+                            <Badge variant={upload.processed ? 'approved' : 'pending'}>
+                              {upload.processed ? 'Processed' : 'Processing'}
+                            </Badge>
+                            {upload.outcome && (
+                              <div className="flex items-center gap-1">
+                                {getStatusIcon(upload.outcome)}
+                                <span className="text-sm capitalize">{upload.outcome}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <FileAudio className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                      <p className="text-muted-foreground">
+                        No uploads found. Upload some call recordings to see analytics.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="patterns" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold">Extracted Call Patterns</h2>
+            <Button 
+              onClick={fetchPatternsData} 
+              disabled={isLoading}
+              variant="outline"
+              className="gap-2"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Refresh
+            </Button>
+          </div>
+
+          {patternsData && patternsData.total_count > 0 ? (
+            <div className="space-y-6">
+              {/* Summary */}
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                      <Zap className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <div>
+                      <p className="text-lg font-semibold">
+                        Found <span className="text-primary">{patternsData.total_count}</span> patterns 
+                        across <span className="text-primary">{patternsData.types.length}</span> categories
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Pattern Groups */}
+              <div className="space-y-4">
+                {Object.entries(patternsData.patterns).map(([type, patterns]) => (
+                  <Card key={type}>
+                    <CardHeader>
+                      <CardTitle className="capitalize flex items-center gap-2">
+                        <Zap className="w-4 h-4" />
+                        {type.replace('_', ' ')} 
+                        <Badge variant="secondary">({patterns.length})</Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
                         {patterns.slice(0, 5).map((pattern, index) => (
-                          <div key={index} style={{
-                            padding: '12px',
-                            border: '1px solid #f3f4f6',
-                            borderRadius: '6px',
-                            background: '#fafafa'
-                          }}>
-                            <div style={{
-                              fontWeight: '500',
-                              color: '#1f2937',
-                              marginBottom: '4px'
-                            }}>
-                              "{pattern.phrase}"
-                            </div>
-                            <div style={{
-                              fontSize: '0.8rem',
-                              color: '#6b7280',
-                              marginBottom: '4px'
-                            }}>
-                              Context: {pattern.context}
-                            </div>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                              <span style={{
-                                padding: '2px 8px',
-                                borderRadius: '12px',
-                                fontSize: '0.7rem',
-                                background: pattern.outcome === 'success' ? '#d1fae5' : '#fee2e2',
-                                color: pattern.outcome === 'success' ? '#065f46' : '#991b1b'
-                              }}>
+                          <div key={index} className="p-3 border rounded-lg bg-muted/30">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <p className="font-medium">"{pattern.phrase}"</p>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  Context: {pattern.context}
+                                </p>
+                              </div>
+                              <Badge variant={pattern.outcome === 'success' ? 'approved' : 'denied'}>
                                 {pattern.outcome}
-                              </span>
+                              </Badge>
                             </div>
                           </div>
                         ))}
                         {patterns.length > 5 && (
-                          <div style={{
-                            textAlign: 'center',
-                            fontSize: '0.9rem',
-                            color: '#6b7280',
-                            padding: '8px'
-                          }}>
+                          <p className="text-center text-sm text-muted-foreground py-2">
                             ... and {patterns.length - 5} more patterns
-                          </div>
+                          </p>
                         )}
                       </div>
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
                 ))}
               </div>
-            ) : (
-              <div style={{
-                background: 'white',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                padding: '40px',
-                textAlign: 'center',
-                color: '#6b7280'
-              }}>
-                No patterns extracted yet. Upload and process some call recordings to see patterns.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="pt-6 text-center py-12">
+                <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center mx-auto mb-4">
+                  <Zap className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <h3 className="font-semibold mb-2">No Patterns Found</h3>
+                <p className="text-muted-foreground text-sm">
+                  Upload and process some call recordings to see patterns.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

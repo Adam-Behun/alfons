@@ -2,6 +2,10 @@
 // Shows real-time conversation between Insurance Agent and Provider Agent (Alfons)
 
 import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { MessageSquare, User, Bot, Loader2, AlertTriangle } from 'lucide-react';
+import { cn, formatTimestamp } from '@/lib/utils';
 
 interface ConversationLog {
   id: number;
@@ -41,94 +45,122 @@ export default function ConversationTranscript() {
     return () => clearInterval(interval);
   }, []);
 
-  const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleTimeString();
-  };
+  if (isLoading) {
+    return (
+      <Card className="h-full">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="w-5 h-5" />
+            Live Conversation
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center h-64">
+          <div className="flex flex-col items-center space-y-4">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-muted-foreground">Loading conversation...</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border h-full flex flex-col">
-      {/* Header */}
-      <div className="p-4 border-b">
-        <h3 className="text-lg font-semibold text-gray-900">Live Conversation</h3>
-        <p className="text-sm text-gray-600">Real-time transcript of prior authorization call</p>
-      </div>
+    <Card className="h-full flex flex-col">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2">
+          <MessageSquare className="w-5 h-5 text-primary" />
+          Live Conversation
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Real-time transcript of prior authorization call
+        </p>
+      </CardHeader>
 
-      {/* Transcript Content */}
-      <div className="flex-1 overflow-auto p-4">
-        {isLoading ? (
+      <CardContent className="flex-1 overflow-auto">
+        {logs.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-gray-500">Loading conversation...</div>
-          </div>
-        ) : logs.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center text-gray-500">
-              <div className="text-lg mb-2">No active conversation</div>
-              <div className="text-sm">Start a prior authorization call to see the transcript</div>
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto">
+                <MessageSquare className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg mb-2">No Active Conversation</h3>
+                <p className="text-sm text-muted-foreground">
+                  Start a prior authorization call to see the transcript
+                </p>
+              </div>
             </div>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-6">
             {logs.map((log, index) => (
-              <div key={log.id || index} className="space-y-3">
+              <div key={log.id || index} className="space-y-4">
                 {/* Insurance Agent Message */}
                 {log.user_input && (
-                  <div className="flex items-start gap-3">
+                  <div className="flex gap-3">
                     <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                      </svg>
+                      <User className="w-4 h-4 text-blue-600" />
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-blue-600">Insurance Agent</span>
-                        <span className="text-xs text-gray-500">{formatTimestamp(log.timestamp)}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatTimestamp(log.timestamp)}
+                        </span>
                       </div>
-                      <div className="bg-blue-50 rounded-lg p-3 text-sm text-gray-800">
-                        {log.user_input}
-                      </div>
+                      <Card className="bg-blue-50 border-blue-200">
+                        <CardContent className="p-3">
+                          <p className="text-sm text-slate-800">{log.user_input}</p>
+                        </CardContent>
+                      </Card>
                     </div>
                   </div>
                 )}
 
                 {/* Provider Agent (Alfons) Message */}
                 {log.bot_response && (
-                  <div className="flex items-start gap-3">
+                  <div className="flex gap-3">
                     <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
-                      </svg>
+                      <Bot className="w-4 h-4 text-green-600" />
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-medium text-green-600">Provider Agent (Alfons)</span>
-                        <span className="text-xs text-gray-500">{formatTimestamp(log.timestamp)}</span>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-green-600">
+                          Provider Agent (Alfons)
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatTimestamp(log.timestamp)}
+                        </span>
                       </div>
-                      <div className="bg-green-50 rounded-lg p-3 text-sm text-gray-800">
-                        {log.bot_response}
-                      </div>
+                      <Card className="bg-green-50 border-green-200">
+                        <CardContent className="p-3">
+                          <p className="text-sm text-slate-800">{log.bot_response}</p>
+                        </CardContent>
+                      </Card>
                       
                       {/* Show extracted data if available */}
-                      {(log.patient_id || log.procedure_code || log.insurance) && (
-                        <div className="mt-2 flex flex-wrap gap-2">
+                      {(log.patient_id || log.procedure_code || log.insurance || log.escalated) && (
+                        <div className="flex flex-wrap gap-2 pt-2">
                           {log.patient_id && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
+                            <Badge variant="secondary" className="text-xs bg-purple-100 text-purple-800">
                               Patient: {log.patient_id}
-                            </span>
+                            </Badge>
                           )}
                           {log.procedure_code && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-orange-100 text-orange-800">
+                            <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-800">
                               CPT: {log.procedure_code}
-                            </span>
+                            </Badge>
                           )}
                           {log.insurance && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-cyan-100 text-cyan-800">
+                            <Badge variant="secondary" className="text-xs bg-cyan-100 text-cyan-800">
                               Insurance: {log.insurance}
-                            </span>
+                            </Badge>
                           )}
                           {log.escalated && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-red-100 text-red-800">
+                            <Badge variant="destructive" className="text-xs gap-1">
+                              <AlertTriangle className="w-3 h-3" />
                               Escalated
-                            </span>
+                            </Badge>
                           )}
                         </div>
                       )}
@@ -139,7 +171,7 @@ export default function ConversationTranscript() {
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

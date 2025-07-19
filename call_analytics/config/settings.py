@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import Optional
@@ -114,10 +115,10 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        env_file = ".env"
+        env_file = Path(__file__).parent.parent.parent / ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
-        extra = "allow"  # Allow extra fields from .env
+        extra = "allow"
 
 # Instantiate settings
 settings = Settings()

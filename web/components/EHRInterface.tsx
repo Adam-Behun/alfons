@@ -1,8 +1,12 @@
-// Simple EHR Interface for Alfons Prior Authorization Bot
+// EHR Interface for Alfons Prior Authorization Bot
 // Shows patients needing prior auth with call functionality
 
 import { useState, useEffect } from 'react';
-import styles from './EHRInterface.module.css';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { User, Calendar, Shield, FileText, Phone, Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import Patient from './Patient';
 
 interface PatientRecord {
@@ -24,7 +28,6 @@ export default function EHRInterface() {
   const [callingPatient, setCallingPatient] = useState<number | null>(null);
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
 
-  // Demo phone number for all calls
   const DEMO_PHONE = "516-566-7132";
 
   const fetchPatients = async () => {
@@ -76,99 +79,167 @@ export default function EHRInterface() {
     setSelectedPatientId(null);
   };
 
-  // Show patient details if a patient is selected
+  const getStatusVariant = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return 'pending';
+      case 'approved':
+        return 'approved';
+      case 'denied':
+        return 'denied';
+      default:
+        return 'secondary';
+    }
+  };
+
   if (selectedPatientId) {
     return <Patient patientId={selectedPatientId} onBack={handleBackToList} />;
   }
 
   if (loading) {
     return (
-      <div className={styles.container}>
-        <div className={styles.loading}>Loading patients...</div>
+      <div className="flex items-center justify-center h-full">
+        <div className="flex flex-col items-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading patients...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className={styles.container}>
-        <div className={styles.error}>{error}</div>
+      <div className="flex items-center justify-center h-full p-6">
+        <Card className="max-w-md">
+          <CardContent className="pt-6 text-center">
+            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <FileText className="w-6 h-6 text-red-600" />
+            </div>
+            <h3 className="font-semibold text-lg mb-2">Connection Error</h3>
+            <p className="text-muted-foreground text-sm">{error}</p>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className={styles.container}>
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <div className={styles.header}>
-        <h2 className={styles.title}>EHR - Prior Authorization Queue</h2>
-        <p className={styles.subtitle}>Patients requiring prior authorization</p>
+      <div className="p-6 border-b bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+            <User className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">Prior Authorization Queue</h2>
+            <p className="text-blue-100 text-sm">Patients requiring authorization</p>
+          </div>
+        </div>
       </div>
       
       {/* Patient List */}
-      <div className={styles.content}>
-        <div className={styles.patientList}>
-          {patients.length === 0 ? (
-            <div className={styles.noPatients}>No patients requiring prior authorization at this time.</div>
-          ) : (
-            patients.map((patient) => (
-              <div 
+      <div className="flex-1 overflow-auto p-6">
+        {patients.length === 0 ? (
+          <div className="flex items-center justify-center h-full">
+            <Card className="max-w-md">
+              <CardContent className="pt-6 text-center">
+                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                  <Shield className="w-6 h-6 text-green-600" />
+                </div>
+                <h3 className="font-semibold text-lg mb-2">All Clear!</h3>
+                <p className="text-muted-foreground text-sm">
+                  No patients requiring prior authorization at this time.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {patients.map((patient) => (
+              <Card 
                 key={patient.id} 
-                className={styles.patientCard}
+                className={cn(
+                  "cursor-pointer transition-all duration-200 hover:shadow-md hover:-translate-y-1",
+                  "border-l-4",
+                  patient.prior_auth_status.toLowerCase() === 'pending' && "border-l-amber-400",
+                  patient.prior_auth_status.toLowerCase() === 'approved' && "border-l-green-400",
+                  patient.prior_auth_status.toLowerCase() === 'denied' && "border-l-red-400"
+                )}
                 onClick={() => handlePatientClick(patient.id)}
-                style={{ cursor: 'pointer' }}>
-                <div className={styles.patientInfo}>
-                  <div className={styles.patientHeader}>
-                    <h3 className={styles.patientName}>
-                      {patient.patient_name}
-                    </h3>
-                    <span className={`${styles.statusBadge} ${styles[patient.prior_auth_status.toLowerCase()]}`}>
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                        <User className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <span>{patient.patient_name}</span>
+                    </CardTitle>
+                    <Badge variant={getStatusVariant(patient.prior_auth_status)}>
                       {patient.prior_auth_status}
-                    </span>
+                    </Badge>
+                  </div>
+                </CardHeader>
+                
+                <CardContent className="pt-0">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div className="flex items-center space-x-2 text-sm">
+                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-medium">DOB:</span>
+                      <span>{patient.date_of_birth}</span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-sm">
+                      <Shield className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-medium">Insurance:</span>
+                      <span>{patient.insurance_company_name}</span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-sm">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-medium">Member ID:</span>
+                      <span>{patient.insurance_member_id}</span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-sm">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-medium">CPT Code:</span>
+                      <span>{patient.cpt_code}</span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-sm md:col-span-2">
+                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      <span className="font-medium">Appointment:</span>
+                      <span>{patient.appointment_time}</span>
+                    </div>
                   </div>
                   
-                  <div className={styles.patientDetails}>
-                    <div className={styles.detailRow}>
-                      <span className={styles.label}>DOB:</span>
-                      <span className={styles.value}>{patient.date_of_birth}</span>
+                  {patient.prior_auth_status === 'Pending' && (
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerCall(patient);
+                        }}
+                        disabled={callingPatient === patient.id}
+                        className="gap-2"
+                      >
+                        {callingPatient === patient.id ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Calling...
+                          </>
+                        ) : (
+                          <>
+                            <Phone className="w-4 h-4" />
+                            Call Insurance
+                          </>
+                        )}
+                      </Button>
                     </div>
-                    <div className={styles.detailRow}>
-                      <span className={styles.label}>Insurance:</span>
-                      <span className={styles.value}>{patient.insurance_company_name}</span>
-                    </div>
-                    <div className={styles.detailRow}>
-                      <span className={styles.label}>Member ID:</span>
-                      <span className={styles.value}>{patient.insurance_member_id}</span>
-                    </div>
-                    <div className={styles.detailRow}>
-                      <span className={styles.label}>CPT Code:</span>
-                      <span className={styles.value}>{patient.cpt_code}</span>
-                    </div>
-                    <div className={styles.detailRow}>
-                      <span className={styles.label}>Appointment:</span>
-                      <span className={styles.value}>{patient.appointment_time}</span>
-                    </div>
-                  </div>
-                </div>
-                
-                {patient.prior_auth_status === 'Pending' && (
-                  <div className={styles.actionSection}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation(); // Prevent card click
-                        triggerCall(patient);
-                      }}
-                      disabled={callingPatient === patient.id}
-                      className={`${styles.callButton} ${callingPatient === patient.id ? styles.calling : ''}`}
-                    >
-                      {callingPatient === patient.id ? 'Calling...' : 'Call Insurance'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-        </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
