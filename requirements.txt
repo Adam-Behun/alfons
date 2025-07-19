@@ -16,8 +16,12 @@ twilio==9.3.0
 # ElevenLabs
 elevenlabs==2.7.1
 
-# Supabase
+# Supabase (legacy)
 supabase==2.9.0
+
+# MongoDB (new primary)
+motor==3.3.2
+pymongo==4.6.0
 
 # Environment and config
 python-dotenv==1.0.1
@@ -28,15 +32,17 @@ pydantic-settings==2.4.0
 langchain==0.3.26
 langchain-core==0.3.66
 langchain-openai==0.2.14
+langchain-anthropic==0.1.20
 openai==1.92.2
+anthropic==0.35.0
+
+# Audio processing
 pyannote.audio>=3.3.2
+ffmpeg-python==0.2.0
 
 # Analytics dependencies
-pymongo==4.6.0
-pymongo[srv]==4.6.0
 spacy==3.8.2
 sentence-transformers==3.0.1
-ffmpeg-python==0.2.0
 scikit-learn==1.5.1
 xgboost==2.1.1
 
@@ -44,7 +50,14 @@ xgboost==2.1.1
 pandas==2.2.3
 numpy==2.0.2
 
+# Async task queue
+celery==5.3.4
+redis==5.0.1
 
+# Dependency injection
+inject==5.0.0
+
+# Performance and monitoring
 tenacity>=8.1.0,<10.0.0
 
 # Dashboards
