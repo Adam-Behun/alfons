@@ -16,8 +16,6 @@ class LogLevel(str, Enum):
 
 class LLMProvider(str, Enum):
     OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-    XAI = "xai"
 
 class STTProvider(str, Enum):
     OPENAI = "openai"
@@ -45,16 +43,15 @@ class Settings(BaseSettings):
     TTS_PROVIDER: TTSProvider = Field(default=TTSProvider.ELEVENLABS, env="TTS_PROVIDER")
     
     # === Database Configuration ===
-    # MongoDB (new primary)
+    # MongoDB (primary)
     MONGO_URI: str = Field(
         default="mongodb://localhost:27017",
         env="MONGO_URI"
     )
     MONGO_DB_NAME: str = Field(default="alfons_db", env="MONGO_DB_NAME")
     
-    # Supabase (legacy, for migration)
-    SUPABASE_URL: Optional[str] = Field(default=None, env="SUPABASE_URL")
-    SUPABASE_KEY: Optional[str] = Field(default=None, env="SUPABASE_KEY")
+    # === Redis Configuration ===
+    REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")
     
     # === Telephony Configuration ===
     TWILIO_ACCOUNT_SID: Optional[str] = Field(default=None, env="TWILIO_ACCOUNT_SID")
@@ -65,8 +62,6 @@ class Settings(BaseSettings):
     # === AI Service API Keys ===
     # LLM Providers
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
-    ANTHROPIC_API_KEY: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
-    XAI_API_KEY: Optional[str] = Field(default=None, env="XAI_API_KEY")
     
     # STT Providers
     DEEPGRAM_API_KEY: Optional[str] = Field(default=None, env="DEEPGRAM_API_KEY")
@@ -77,12 +72,11 @@ class Settings(BaseSettings):
     
     # Other AI Services
     PYANNOTE_API_KEY: Optional[str] = Field(default=None, env="PYANNOTE_API_KEY")
+    HUGGINGFACE_TOKEN: Optional[str] = Field(default=None, env="HUGGINGFACE_TOKEN")
     
     # === Model Configuration ===
     # LLM Models
     OPENAI_MODEL: str = Field(default="gpt-4o-mini-2024-07-18", env="OPENAI_MODEL")
-    ANTHROPIC_MODEL: str = Field(default="claude-3-sonnet-20240229", env="ANTHROPIC_MODEL")
-    XAI_MODEL: str = Field(default="grok-3-mini", env="XAI_MODEL")
     
     # TTS Configuration
     ELEVENLABS_VOICE_ID: str = Field(default="21m00Tcm4TlvDQ8ikWAM", env="ELEVENLABS_VOICE_ID")
@@ -122,13 +116,12 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         case_sensitive = True
         extra = "allow"
+        validate_assignment = True
     
     def get_api_key(self, provider: str) -> Optional[str]:
         """Get API key for specified provider"""
         key_mapping = {
             "openai": self.OPENAI_API_KEY,
-            "anthropic": self.ANTHROPIC_API_KEY,
-            "xai": self.XAI_API_KEY,
             "elevenlabs": self.ELEVENLABS_API_KEY,
             "deepgram": self.DEEPGRAM_API_KEY,
             "assemblyai": self.ASSEMBLYAI_API_KEY,
@@ -153,6 +146,50 @@ class Settings(BaseSettings):
         results[f"tts_{self.TTS_PROVIDER.value}"] = tts_key is not None
         
         return results
+    
+    def validate_required_config(self) -> Dict[str, bool]:
+        """Validate that all required configuration is present."""
+        validation_results = {}
+        
+        # Required API keys based on selected providers
+        validation_results["openai_api_key"] = bool(self.OPENAI_API_KEY)
+        validation_results["twilio_config"] = all([
+            self.TWILIO_ACCOUNT_SID,
+            self.TWILIO_AUTH_TOKEN,
+            self.TWILIO_PHONE_NUMBER
+        ])
+        
+        # Database configuration
+        validation_results["mongodb_config"] = bool(self.MONGO_URI)
+        validation_results["redis_config"] = bool(self.REDIS_URL)
+        
+        # Provider-specific validation
+        provider_validation = self.validate_provider_config()
+        validation_results.update(provider_validation)
+        
+        return validation_results
 
 # Global settings instance
-settings = Settings()
+config = Settings()
+
+# Validate configuration on import
+try:
+    validation_results = config.validate_required_config()
+    missing_config = [key for key, valid in validation_results.items() if not valid]
+    
+    if missing_config:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Missing configuration for: {', '.join(missing_config)}")
+        logger.warning("Some features may not work properly. Check your .env file.")
+        
+except Exception as e:
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Configuration validation failed: {e}")
+
+# Export commonly used values for convenience
+MONGO_DB_NAME = config.MONGO_DB_NAME
+MONGO_URI = config.MONGO_URI
+OPENAI_API_KEY = config.OPENAI_API_KEY
+REDIS_URL = config.REDIS_URL

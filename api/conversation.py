@@ -20,7 +20,7 @@ import redis.asyncio as redis
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from shared.config import config
-from shared.logging_config import get_logger
+from shared.logging import get_logger
 
 logger = get_logger(__name__)
 

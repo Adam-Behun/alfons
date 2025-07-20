@@ -13,14 +13,10 @@ import tempfile
 import os
 
 from .s2s_pipeline import S2SPipeline, create_s2s_pipeline
-from call_analytics.transcription_engine import (
-    TranscriptionPipeline, 
-    create_healthcare_pipeline,
-    TranscriptionResult,
-    ValidationResult
-)
+from call_analytics.transcription_engine.pipeline import create_healthcare_pipeline
+
 from shared.config import config
-from shared.logging_config import get_logger
+from shared.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -37,7 +33,7 @@ class SpeechProcessingRouter:
     Unified speech processing router that delegates to appropriate engines.
     Routes real-time requests to S2S pipeline and batch requests to transcription engine.
     """
-    
+
     def __init__(self):
         """Initialize speech processing router with components."""
         # Initialize S2S pipeline for real-time processing
@@ -46,7 +42,7 @@ class SpeechProcessingRouter:
             voice="alloy",
             enable_rag=True
         )
-        
+
         # Initialize transcription pipeline for batch processing
         self.transcription_pipeline = create_healthcare_pipeline(
             stt_provider="deepgram",
@@ -54,7 +50,7 @@ class SpeechProcessingRouter:
             enable_diarization=True,
             processing_mode="batch"
         )
-        
+
         # Processing statistics
         self.stats = {
             "realtime_requests": 0,
@@ -62,7 +58,7 @@ class SpeechProcessingRouter:
             "total_processing_time": 0.0,
             "average_latency": 0.0
         }
-        
+
         logger.info("SpeechProcessingRouter initialized with S2S and transcription engines")
     
     async def process_speech(
@@ -488,49 +484,3 @@ def get_speech_router() -> SpeechProcessingRouter:
     if speech_router is None:
         speech_router = SpeechProcessingRouter()
     return speech_router
-
-
-# Legacy function compatibility (maintains backward compatibility)
-async def transcribe_audio(audio_url: str) -> str:
-    """
-    Legacy transcription function for backward compatibility.
-    
-    Args:
-        audio_url: URL or path to audio file
-        
-    Returns:
-        Transcript text
-    """
-    router = get_speech_router()
-    result = await router.transcribe_audio(audio_url, enhanced=False)
-    return result.get("transcript", "[Transcription failed]")
-
-
-async def synthesize_speech(text: str) -> Optional[str]:
-    """
-    Legacy speech synthesis function for backward compatibility.
-    
-    Args:
-        text: Text to synthesize
-        
-    Returns:
-        URL to generated audio file or None if failed
-    """
-    try:
-        router = get_speech_router()
-        audio_bytes = await router.synthesize_speech(text, streaming=False)
-        
-        # Save to temporary file and return path (placeholder)
-        # In full implementation, would save to accessible URL
-        temp_file = f"/tmp/speech_{int(time.time())}.wav"
-        with open(temp_file, "wb") as f:
-            f.write(audio_bytes)
-        
-        return temp_file
-        
-    except Exception as e:
-        logger.error(f"Legacy speech synthesis failed: {e}")
-        return None
-
-
-# Clean up old processing functions (these would be removed)

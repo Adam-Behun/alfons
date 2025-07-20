@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 import base64
-from typing import Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 import websockets
 from datetime import datetime
 
@@ -16,7 +16,7 @@ from twilio.twiml.voice_response import VoiceResponse, Start, Stream
 
 from .s2s_pipeline import S2SPipeline, create_s2s_pipeline
 from shared.config import config
-from shared.logging_config import get_logger
+from shared.logging import get_logger
 
 logger = get_logger(__name__)
 

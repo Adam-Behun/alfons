@@ -1,79 +1,29 @@
 """
-Transcription Engine - Unified healthcare transcription processing.
-Provides speech-to-text, speaker diarization, audio processing, and validation.
+Simplified call_analytics module exports.
+Exports key classes from merged files for MVP use.
 """
 
-from .stt_engine import (
-    STTEngine,
-    ISTTProvider,
-    OpenAIWhisperProvider,
-    DeepgramProvider,
-    AssemblyAIProvider,
-    TranscriptionResult,
-    TranscriptionSegment
-)
-
-from .audio_processor import (
-    AudioProcessor,
-    AudioMetrics
-)
-
-from .speaker_diarization import (
-    SpeakerDiarizer,
-    ISpeakerDiarizationProvider,
-    PyAnnoteProvider,
-    SpeakerSegment,
-    DiarizationResult
-)
-
-from .transcript_validator import (
-    TranscriptValidator,
-    ITranscriptValidator,
-    LLMTranscriptValidator,
-    ValidationResult,
-    ValidationIssue,
-    validate_transcript_sync
-)
-
-from .pipeline import (
-    TranscriptionPipeline,
-    PipelineConfig,
-    PipelineResult
-)
+from .analytics_engine import AnalyticsEngine
+from .database_connector import MongoConnector
+from .input_handler import InputHandler
+from .learning_pipeline import PatternExtractor, ScriptGenerator, MemoryManager, TrainingPipeline
+from .queue_manager import process_call, get_queue_status, health_check  # From simplified task_queue.py
+from .transcription_pipeline import TranscriptionPipeline, TranscriptionSegment, TranscriptionResult
 
 __all__ = [
-    # STT Engine
-    "STTEngine",
-    "ISTTProvider", 
-    "OpenAIWhisperProvider",
-    "DeepgramProvider",
-    "AssemblyAIProvider",
-    "TranscriptionResult",
-    "TranscriptionSegment",
-    
-    # Audio Processing
-    "AudioProcessor",
-    "AudioMetrics",
-    
-    # Speaker Diarization
-    "SpeakerDiarizer",
-    "ISpeakerDiarizationProvider",
-    "PyAnnoteProvider", 
-    "SpeakerSegment",
-    "DiarizationResult",
-    
-    # Validation
-    "TranscriptValidator",
-    "ITranscriptValidator",
-    "LLMTranscriptValidator",
-    "ValidationResult",
-    "ValidationIssue",
-    "validate_transcript_sync",
-    
-    # Pipeline
+    "AnalyticsEngine",
+    "MongoConnector",
+    "InputHandler",
+    "PatternExtractor",
+    "ScriptGenerator",
+    "MemoryManager",
+    "TrainingPipeline",
+    "process_call",
+    "get_queue_status",
+    "health_check",
     "TranscriptionPipeline",
-    "PipelineConfig",
-    "PipelineResult"
+    "TranscriptionSegment",
+    "TranscriptionResult"
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.0.0-mvp"

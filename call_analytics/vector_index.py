@@ -8,7 +8,7 @@ import numpy as np
 from motor.motor_asyncio import AsyncIOMotorCollection
 import asyncio
 
-from shared.config import settings
+from shared.config import config
 from shared.logging import get_logger
 from .mongo_connector import AsyncMongoConnector
 

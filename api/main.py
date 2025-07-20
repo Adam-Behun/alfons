@@ -25,24 +25,28 @@ from .telephony import EnhancedTelephonyService, get_telephony_service
 from .speech import SpeechProcessingRouter, get_speech_router, ProcessingMode
 from .conversation import EnhancedConversationManager, get_conversation_manager, ConversationMode
 
-# Import existing components
-from .database import log_conversation, get_logs
-from .patients import get_patients, get_patient_by_id, update_patient_auth_status, get_pending_authorizations
-
 # Import analytics components
 from call_analytics.input_sources.historical_uploader import HistoricalUploader
-from call_analytics.database.mongo_connector import MongoConnector
-from call_analytics.analytics.conversation_analyzer import ConversationAnalyzer
-from call_analytics.analytics.success_predictor import SuccessPredictor
-from call_analytics.learning.pattern_extractor import PatternExtractor
+from call_analytics.database.mongo_connector import AsyncMongoConnector
+
+# Phase 5: Post-call processing and queues
+from .hooks.learning_hook import (
+    handle_call_completion, 
+    CallEndPayload, 
+    get_conversation_data
+)
 
 from shared.config import config
-from shared.logging_config import get_logger
+from shared.logging import get_logger
 
 # Load environment variables
 load_dotenv()
 
 logger = get_logger(__name__)
+
+learning_hook_enabled: bool = False
+twilio_processor: Optional[TwilioProcessor] = None
+queue_processing_enabled: bool = False
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -59,7 +63,7 @@ s2s_pipeline: Optional[S2SPipeline] = None
 
 # Analytics components
 analytics_uploader: Optional[HistoricalUploader] = None
-mongo_connector: Optional[MongoConnector] = None
+mongo_connector: Optional[AsyncMongoConnector] = None
 conversation_analyzer: Optional[ConversationAnalyzer] = None
 success_predictor: Optional[SuccessPredictor] = None
 pattern_extractor: Optional[PatternExtractor] = None
@@ -73,6 +77,7 @@ async def startup_event():
     """Initialize all services and validate configuration on startup."""
     global telephony_service, speech_router, conversation_manager, s2s_pipeline
     global analytics_uploader, mongo_connector, conversation_analyzer, success_predictor, pattern_extractor
+    global twilio_processor, learning_hook_enabled, queue_processing_enabled
     
     logger.info("Starting Alfons Enhanced API...")
     
@@ -97,13 +102,34 @@ async def startup_event():
         # Initialize analytics components
         try:
             analytics_uploader = HistoricalUploader()
-            mongo_connector = MongoConnector()
+            mongo_connector = AsyncMongoConnector()
+            await mongo_connector.connect()
             conversation_analyzer = ConversationAnalyzer()
             success_predictor = SuccessPredictor()
             pattern_extractor = PatternExtractor()
             logger.info("Analytics components initialized")
         except Exception as e:
             logger.warning(f"Analytics components failed to initialize: {e}")
+        
+        # Phase 5: Initialize post-call processing components
+        try:
+            # Initialize Twilio processor for webhook handling
+            twilio_processor = TwilioProcessor()
+            
+            # Check if Celery/Redis is available for queue processing
+            try:
+                queue_status = get_queue_status()
+                queue_processing_enabled = True
+                learning_hook_enabled = True
+                logger.info("Phase 5 post-call processing and queues initialized successfully")
+            except Exception as queue_e:
+                logger.warning(f"Queue processing unavailable: {queue_e}")
+                queue_processing_enabled = False
+                learning_hook_enabled = False
+                
+        except Exception as e:
+            logger.warning(f"Phase 5 components failed to initialize: {e}")
+            twilio_processor = None
         
         # Create static directory
         static_dir = "static"
@@ -176,6 +202,16 @@ async def root():
                 "upload_audio": "/upload-audio",
                 "analytics_data": "/analytics-data",
                 "call_patterns": "/call-patterns"
+            },
+            "phase5_processing": {
+                "call_status_webhook": "/webhooks/twilio/call-status",
+                "manual_call_end": "/webhooks/twilio/call-end", 
+                "call_analytics": "/analytics/call/{call_sid}",
+                "processing_stats": "/analytics/processing-stats",
+                "retry_processing": "/analytics/retry-processing/{call_sid}",
+                "batch_upload": "/analytics/upload-batch",
+                "queue_status": "/queue/status",
+                "cleanup": "/analytics/cleanup"
             }
         }
     }
@@ -208,6 +244,29 @@ async def enhanced_health_check():
             "static_dir_exists": os.path.exists("static"),
             "redis_configured": bool(config.REDIS_URL),
             "mongodb_configured": bool(config.MONGODB_URL)
+        }
+        
+        # Phase 5: Check post-call processing services
+        if twilio_processor:
+            try:
+                health_data["services"]["twilio_processor"] = {
+                    "status": "healthy",
+                    "processing_enabled": True
+                }
+            except Exception as e:
+                health_data["services"]["twilio_processor"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+        
+        health_data["services"]["learning_hook"] = {
+            "status": "healthy" if learning_hook_enabled else "disabled",
+            "enabled": learning_hook_enabled
+        }
+        
+        health_data["services"]["queue_processing"] = {
+            "status": "healthy" if queue_processing_enabled else "disabled", 
+            "enabled": queue_processing_enabled
         }
         
         # Determine overall status
@@ -648,8 +707,8 @@ async def get_analytics_data(limit: int = 20):
     
     try:
         # Get recent uploads with processing status
-        uploads = mongo_connector.find_documents("uploads", {}, limit=limit)
-        analytics = mongo_connector.find_documents("analytics", {}, limit=limit)
+        uploads = await mongo_connector.find_documents("uploads", {}, limit=limit)
+        analytics = await mongo_connector.find_documents("analytics", {}, limit=limit)
         
         # Calculate summary statistics
         total_uploads = len(uploads)
@@ -685,7 +744,7 @@ async def get_call_patterns(pattern_type: Optional[str] = None, limit: int = 50)
         if pattern_type:
             query = {"patterns.type": pattern_type}
         
-        patterns_data = mongo_connector.find_documents("training_data", query, limit=limit)
+        patterns_data = await mongo_connector.find_documents("training_data", query, limit=limit)
         
         # Extract and format patterns
         all_patterns = []
@@ -714,6 +773,326 @@ async def get_call_patterns(pattern_type: Optional[str] = None, limit: int = 50)
     except Exception as e:
         logger.error(f"Error fetching call patterns: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PHASE 5: POST-CALL PROCESSING & QUEUE ENDPOINTS
+# ============================================================================
+
+@app.post("/webhooks/twilio/call-status")
+async def handle_twilio_call_status_webhook(request: Request):
+    """
+    Enhanced Twilio webhook handler for call status updates.
+    Triggers post-call processing and learning pipeline.
+    """
+    if not twilio_processor:
+        logger.warning("Twilio processor not available")
+        return {"status": "processor_unavailable"}
+    
+    try:
+        form = await request.form()
+        webhook_data = dict(form)
+        
+        logger.info(f"Received Twilio call status webhook: {webhook_data.get('CallSid')} - {webhook_data.get('CallStatus')}")
+        
+        # Process through enhanced Twilio processor
+        result = twilio_processor.process_call_webhook(webhook_data)
+        
+        # If call completed and learning hook is enabled, trigger learning pipeline
+        if (webhook_data.get('CallStatus') == 'completed' and 
+            learning_hook_enabled and 
+            webhook_data.get('CallSid')):
+            
+            try:
+                # Get conversation data from database
+                conversation_data = await get_conversation_data(webhook_data.get('CallSid'))
+                
+                # Prepare call end payload
+                call_payload = CallEndPayload(**webhook_data)
+                
+                # Trigger learning hook
+                learning_result = await handle_call_completion(
+                    payload=call_payload,
+                    conversation_entities=conversation_data.get('entities') if conversation_data else None,
+                    escalation_data=conversation_data.get('escalation') if conversation_data else None
+                )
+                
+                logger.info(f"Learning hook result: {learning_result}")
+                result['learning_hook'] = learning_result
+                
+            except Exception as learning_e:
+                logger.error(f"Learning hook failed for call {webhook_data.get('CallSid')}: {learning_e}")
+                result['learning_hook'] = {'status': 'error', 'error': str(learning_e)}
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Twilio webhook processing failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/webhooks/twilio/call-end")
+async def manual_call_end_trigger(
+    call_sid: str = Form(...),
+    call_status: str = Form("completed"),
+    call_duration: Optional[str] = Form(None),
+    recording_url: Optional[str] = Form(None)
+):
+    """
+    Manual trigger for call end processing (for testing or manual intervention).
+    """
+    if not learning_hook_enabled:
+        raise HTTPException(status_code=503, detail="Learning hook not available")
+    
+    try:
+        # Create call end payload
+        payload_data = {
+            'CallSid': call_sid,
+            'CallStatus': call_status,
+            'CallDuration': call_duration,
+            'RecordingUrl': recording_url
+        }
+        
+        call_payload = CallEndPayload(**payload_data)
+        
+        # Get conversation data
+        conversation_data = await get_conversation_data(call_sid)
+        
+        # Trigger learning hook
+        result = await handle_call_completion(
+            payload=call_payload,
+            conversation_entities=conversation_data.get('entities') if conversation_data else None,
+            escalation_data=conversation_data.get('escalation') if conversation_data else None
+        )
+        
+        return {
+            "status": "success",
+            "call_sid": call_sid,
+            "learning_result": result,
+            "conversation_data_found": conversation_data is not None
+        }
+        
+    except Exception as e:
+        logger.error(f"Manual call end trigger failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/call/{call_sid}")
+async def get_call_analytics_detailed(call_sid: str):
+    """
+    Get comprehensive analytics for a specific call including queue processing status.
+    """
+    if not twilio_processor:
+        raise HTTPException(status_code=503, detail="Twilio processor not available")
+    
+    try:
+        # Get analytics from Twilio processor
+        analytics = twilio_processor.get_call_analytics(call_sid)
+        
+        # Get conversation data from database
+        conversation_data = await get_conversation_data(call_sid)
+        
+        # Combine all data
+        comprehensive_analytics = {
+            "call_sid": call_sid,
+            "twilio_analytics": analytics,
+            "conversation_data": conversation_data,
+            "queue_processing_enabled": queue_processing_enabled,
+            "generated_at": datetime.utcnow().isoformat()
+        }
+        
+        return comprehensive_analytics
+        
+    except Exception as e:
+        logger.error(f"Error getting call analytics for {call_sid}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/processing-stats")
+async def get_processing_statistics(hours_back: int = 24):
+    """
+    Get comprehensive processing statistics including queue metrics.
+    """
+    try:
+        stats = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "hours_back": hours_back,
+            "services": {
+                "learning_hook": learning_hook_enabled,
+                "queue_processing": queue_processing_enabled,
+                "twilio_processor": twilio_processor is not None
+            }
+        }
+        
+        # Get Twilio processor stats
+        if twilio_processor:
+            stats["twilio_stats"] = twilio_processor.get_processing_stats(hours_back)
+        
+        # Get queue stats
+        if queue_processing_enabled:
+            try:
+                stats["queue_stats"] = get_queue_status()
+            except Exception as e:
+                stats["queue_stats"] = {"error": str(e)}
+        
+        # Get analytics uploader stats
+        if analytics_uploader:
+            stats["uploader_stats"] = analytics_uploader.get_processing_stats()
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting processing statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analytics/retry-processing/{call_sid}")
+async def retry_call_processing(call_sid: str):
+    """
+    Retry processing for a failed call.
+    """
+    if not twilio_processor:
+        raise HTTPException(status_code=503, detail="Twilio processor not available")
+    
+    try:
+        result = twilio_processor.retry_failed_processing(call_sid)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error retrying processing for {call_sid}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analytics/upload-batch")
+async def upload_batch_files(
+    files: list[UploadFile] = File(...),
+    batch_metadata: Optional[str] = Form(None)
+):
+    """
+    Upload multiple audio files as a batch for historical analysis.
+    """
+    if not analytics_uploader:
+        raise HTTPException(status_code=503, detail="Analytics uploader not available")
+    
+    try:
+        # Parse batch metadata
+        batch_meta = {}
+        if batch_metadata:
+            try:
+                batch_meta = json.loads(batch_metadata)
+            except json.JSONDecodeError:
+                logger.warning("Invalid batch metadata JSON")
+        
+        # Save temporary files
+        temp_paths = []
+        temp_dir = "./temp_uploads"
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        for file in files:
+            if not file.filename.lower().endswith(('.mp3', '.wav', '.m4a')):
+                continue
+                
+            temp_path = os.path.join(temp_dir, file.filename)
+            with open(temp_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+            temp_paths.append(temp_path)
+        
+        # Upload batch
+        batch_result = analytics_uploader.upload_batch(temp_paths, batch_meta)
+        
+        # Clean up temp files
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        return {
+            "status": "success",
+            "batch_result": batch_result,
+            "files_processed": len(temp_paths)
+        }
+        
+    except Exception as e:
+        logger.error(f"Batch upload error: {e}")
+        # Clean up temp files on error
+        if 'temp_paths' in locals():
+            for temp_path in temp_paths:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/queue/status")
+async def get_queue_processing_status():
+    """
+    Get current status of the processing queue.
+    """
+    if not queue_processing_enabled:
+        return {
+            "queue_enabled": False,
+            "message": "Queue processing not available"
+        }
+    
+    try:
+        # Get queue status
+        queue_status = get_queue_status()
+        
+        # Get queue health check
+        health_result = queue_health_check.delay()
+        health_status = health_result.get(timeout=5)  # 5 second timeout
+        
+        return {
+            "queue_enabled": True,
+            "status": queue_status,
+            "health": health_status,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting queue status: {e}")
+        return {
+            "queue_enabled": True,
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+
+@app.delete("/analytics/cleanup")
+async def cleanup_old_files(
+    days_old: int = 30,
+    cleanup_recordings: bool = True,
+    cleanup_uploads: bool = True
+):
+    """
+    Clean up old files to manage disk space.
+    """
+    results = {
+        "cleanup_started_at": datetime.utcnow().isoformat(),
+        "days_old": days_old,
+        "results": {}
+    }
+    
+    try:
+        # Clean up old uploads
+        if cleanup_uploads and analytics_uploader:
+            upload_cleanup_count = analytics_uploader.cleanup_old_files(days_old)
+            results["results"]["uploads_cleaned"] = upload_cleanup_count
+        
+        # Clean up old recordings
+        if cleanup_recordings and twilio_processor:
+            recording_cleanup_count = twilio_processor.cleanup_old_recordings(days_old)
+            results["results"]["recordings_cleaned"] = recording_cleanup_count
+        
+        results["status"] = "success"
+        results["completed_at"] = datetime.utcnow().isoformat()
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
+        results["status"] = "error"
+        results["error"] = str(e)
+        return results
 
 
 # ============================================================================

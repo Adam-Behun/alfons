@@ -19,8 +19,7 @@ import redis.asyncio as redis
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from shared.config import config
-from shared.logging_config import get_logger
-from call_analytics.transcription_engine import TranscriptionSegment
+from shared.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -93,9 +92,20 @@ class RAGRetriever:
     """Retrieves relevant context from past prior auth conversations."""
     
     def __init__(self, mongodb_client: AsyncIOMotorClient):
+        """Initialize RAG retriever with MongoDB client and proper config."""
+        self.mongodb_client = mongodb_client
+        
+        # Use the database name from the global config
         self.db = mongodb_client[config.DATABASE_NAME]
         self.embeddings_collection = self.db["conversation_embeddings"]
+        
+        # Initialize OpenAI client with config API key
+        if not config.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not configured in settings")
+        
         self.openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+        
+        logger.info(f"RAGRetriever initialized with database: {config.DATABASE_NAME}")
     
     async def get_relevant_context(
         self, 
@@ -167,11 +177,14 @@ class RAGRetriever:
 
 
 class ConversationStateManager:
-    """Manages conversation state with Redis for low-latency access."""
+    """Manages conversation state using Redis for low-latency access."""
     
     def __init__(self, redis_client: redis.Redis):
+        """Initialize state manager with Redis client."""
         self.redis = redis_client
         self.default_ttl = 3600  # 1 hour
+        
+        logger.info("ConversationStateManager initialized")
     
     async def get_memory(self, call_id: str) -> ConversationMemory:
         """Get conversation memory from Redis."""
@@ -219,11 +232,19 @@ class S2SPipeline:
     Integrates OpenAI Realtime API with RAG and state management.
     """
     
-    def __init__(self, config: S2SConfig = None):
+    def __init__(self, s2s_config: S2SConfig = None):
         """Initialize S2S pipeline with components."""
-        self.config = config or S2SConfig()
+        self.s2s_config = s2s_config or S2SConfig()
         
-        # Initialize clients
+        # Validate required configuration
+        if not config.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not configured in settings")
+        if not config.MONGODB_URL:
+            raise ValueError("MONGODB_URL not configured in settings")
+        if not config.REDIS_URL:
+            raise ValueError("REDIS_URL not configured in settings")
+        
+        # Initialize clients using global config
         self.openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
         self.redis_client = redis.from_url(config.REDIS_URL)
         self.mongodb_client = AsyncIOMotorClient(config.MONGODB_URL)
@@ -236,6 +257,8 @@ class S2SPipeline:
         self.active_sessions: Dict[str, Any] = {}
         
         logger.info("S2SPipeline initialized for healthcare prior auth")
+        logger.info(f"Using database: {config.DATABASE_NAME}")
+        logger.info(f"Using model: {self.s2s_config.model}")
     
     async def start_call_session(self, call_id: str) -> Dict[str, Any]:
         """
@@ -255,8 +278,8 @@ class S2SPipeline:
             
             # Create Realtime session configuration
             session_config = {
-                "model": self.config.model,
-                "voice": self.config.voice,
+                "model": self.s2s_config.model,
+                "voice": self.s2s_config.voice,
                 "instructions": self._build_system_instructions(memory),
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
@@ -335,12 +358,12 @@ class S2SPipeline:
             await realtime_session.input_audio_buffer.append(pcm_audio)
             
             # Process with RAG enhancement if enabled
-            if self.config.enable_rag:
+            if self.s2s_config.enable_rag:
                 # Get partial transcription for context
                 transcript = await self._get_partial_transcript(realtime_session)
                 if transcript:
                     rag_context = await self.rag_retriever.get_relevant_context(
-                        transcript, memory.current_state, self.config.max_rag_results
+                        transcript, memory.current_state, self.s2s_config.max_rag_results
                     )
                     if rag_context:
                         await self._inject_rag_context(realtime_session, rag_context)
@@ -361,8 +384,8 @@ class S2SPipeline:
             response_time = (time.time() - start_time) * 1000
             session["latency_stats"]["response_times"].append(response_time)
             
-            if response_time > self.config.max_response_time:
-                logger.warning(f"Response time {response_time:.1f}ms exceeded target {self.config.max_response_time}ms")
+            if response_time > self.s2s_config.max_response_time:
+                logger.warning(f"Response time {response_time:.1f}ms exceeded target {self.s2s_config.max_response_time}ms")
             
         except Exception as e:
             logger.error(f"Error processing audio for {call_id}: {e}")
@@ -538,11 +561,53 @@ Insurance: {memory.insurance or 'Unknown'}
         memory.context_history.append(f"Assistant: {assistant_transcript}")
         
         # Keep only recent context
-        if len(memory.context_history) > self.config.context_window * 2:
-            memory.context_history = memory.context_history[-self.config.context_window * 2:]
+        if len(memory.context_history) > self.s2s_config.context_window * 2:
+            memory.context_history = memory.context_history[-self.s2s_config.context_window * 2:]
         
         # Update state in Redis
         await self.state_manager.update_memory(memory)
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Perform health check on all S2S components."""
+        health_status = {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "components": {}
+        }
+        
+        try:
+            # Check OpenAI client
+            health_status["components"]["openai"] = {
+                "status": "healthy" if config.OPENAI_API_KEY else "missing_key"
+            }
+            
+            # Check Redis connection
+            try:
+                await self.redis_client.ping()
+                health_status["components"]["redis"] = {"status": "healthy"}
+            except Exception as e:
+                health_status["components"]["redis"] = {"status": "unhealthy", "error": str(e)}
+                health_status["status"] = "degraded"
+            
+            # Check MongoDB connection
+            try:
+                await self.mongodb_client.admin.command('ping')
+                health_status["components"]["mongodb"] = {"status": "healthy"}
+            except Exception as e:
+                health_status["components"]["mongodb"] = {"status": "unhealthy", "error": str(e)}
+                health_status["status"] = "degraded"
+            
+            # Check active sessions
+            health_status["components"]["sessions"] = {
+                "status": "healthy",
+                "active_count": len(self.active_sessions)
+            }
+            
+        except Exception as e:
+            health_status["status"] = "unhealthy"
+            health_status["error"] = str(e)
+        
+        return health_status
 
 
 # Factory function for easy initialization
@@ -562,7 +627,7 @@ def create_s2s_pipeline(
     Returns:
         Configured S2SPipeline instance
     """
-    config = S2SConfig(
+    s2s_config = S2SConfig(
         model=model,
         voice=voice,
         enable_rag=enable_rag,
@@ -570,4 +635,4 @@ def create_s2s_pipeline(
         require_patient_verification=True
     )
     
-    return S2SPipeline(config)
+    return S2SPipeline(s2s_config)
