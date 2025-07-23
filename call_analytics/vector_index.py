@@ -21,7 +21,7 @@ class AsyncVectorIndex:
     Uses MongoDB Atlas Vector Search when available, fallback to manual cosine similarity.
     """
     
-    def __init__(self, model_name: str = settings.EMBEDDING_MODEL):
+    def __init__(self, model_name: str = config.EMBEDDING_MODEL):
         self.model_name = model_name
         self.model: Optional[SentenceTransformer] = None
         self.connector = AsyncMongoConnector()
@@ -119,10 +119,10 @@ class AsyncVectorIndex:
         return doc_id
     
     async def vector_search(
-        self, 
-        collection_name: str, 
-        query_text: str, 
-        top_k: int = 5, 
+        self,
+        collection_name: str,
+        query_text: str,
+        top_k: int = 5,
         embedding_field: str = "embedding",
         filter_query: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
@@ -133,7 +133,6 @@ class AsyncVectorIndex:
         # Generate query embedding
         query_embeddings = await self.generate_embeddings([query_text])
         query_embedding = query_embeddings[0]
-        
         collection = await self.connector.get_collection(collection_name)
         
         # Try MongoDB Atlas Vector Search first
@@ -154,174 +153,173 @@ class AsyncVectorIndex:
                     }
                 }
             ]
-            
             # Add filter if provided
             if filter_query:
                 pipeline.append({"$match": filter_query})
+            
             results = []
-           async for doc in collection.aggregate(pipeline):
-               if "_id" in doc:
-                   doc["id"] = str(doc["_id"])
-                   del doc["_id"]
-               results.append(doc)
-           
-           if results:
-               logger.info(f"Atlas vector search returned {len(results)} results")
-               return results
-               
-       except Exception as atlas_error:
-           logger.warning(f"Atlas vector search failed, using fallback: {atlas_error}")
-       
-       # Fallback to manual cosine similarity
-       return await self._manual_vector_search(
-           collection, query_embedding, top_k, embedding_field, filter_query
-       )
-   
-   async def _manual_vector_search(
-       self,
-       collection: AsyncIOMotorCollection,
-       query_embedding: List[float],
-       top_k: int,
-       embedding_field: str,
-       filter_query: Optional[Dict[str, Any]] = None
-   ) -> List[Dict[str, Any]]:
-       """Manual cosine similarity search for non-Atlas environments"""
-       try:
-           # Build query
-           search_query = {embedding_field: {"$exists": True}}
-           if filter_query:
-               search_query.update(filter_query)
-           
-           # Fetch documents with embeddings
-           docs = []
-           async for doc in collection.find(search_query):
-               docs.append(doc)
-           
-           # Compute similarities
-           similarities = []
-           query_emb = np.array(query_embedding)
-           
-           for doc in docs:
-               try:
-                   doc_emb = np.array(doc[embedding_field])
-                   similarity = np.dot(doc_emb, query_emb) / (
-                       np.linalg.norm(doc_emb) * np.linalg.norm(query_emb)
-                   )
-                   
-                   # Convert ObjectId to string
-                   if "_id" in doc:
-                       doc["id"] = str(doc["_id"])
-                       del doc["_id"]
-                   
-                   similarities.append({
-                       "document": doc,
-                       "score": float(similarity)
-                   })
-               except Exception as e:
-                   logger.warning(f"Error computing similarity for document: {e}")
-                   continue
-           
-           # Sort by similarity and return top k
-           similarities.sort(key=lambda x: x["score"], reverse=True)
-           results = similarities[:top_k]
-           
-           logger.info(f"Manual vector search returned {len(results)} results")
-           return results
-           
-       except Exception as e:
-           logger.error(f"Error in manual vector search: {e}")
-           raise
-   
-   async def update_embedding(
-       self,
-       collection_name: str,
-       doc_id: str,
-       text: str,
-       embedding_field: str = "embedding"
-   ) -> int:
-       """Update embedding for existing document"""
-       embeddings = await self.generate_embeddings([text])
-       
-       result = await self.connector.update_document(
-           collection_name,
-           {"_id": ObjectId(doc_id)},
-           {"$set": {embedding_field: embeddings[0]}}
-       )
-       
-       logger.info(f"Updated embedding for document {doc_id}")
-       return result
-   
-   async def bulk_generate_embeddings(
-       self,
-       collection_name: str,
-       text_field: str,
-       embedding_field: str = "embedding",
-       batch_size: int = 100
-   ):
-       """Generate embeddings for all documents in collection that don't have them"""
-       collection = await self.connector.get_collection(collection_name)
-       
-       # Find documents without embeddings
-       query = {
-           text_field: {"$exists": True, "$ne": ""},
-           embedding_field: {"$exists": False}
-       }
-       
-       total_processed = 0
-       async for doc_batch in self._batch_cursor(collection.find(query), batch_size):
-           texts = [doc[text_field] for doc in doc_batch if doc.get(text_field)]
-           if not texts:
-               continue
-           
-           # Generate embeddings
-           embeddings = await self.generate_embeddings(texts)
-           
-           # Update documents
-           for doc, embedding in zip(doc_batch, embeddings):
-               await collection.update_one(
-                   {"_id": doc["_id"]},
-                   {"$set": {embedding_field: embedding}}
-               )
-           
-           total_processed += len(doc_batch)
-           logger.info(f"Processed {total_processed} documents for embeddings")
-   
-   async def _batch_cursor(self, cursor, batch_size: int):
-       """Helper to batch cursor results"""
-       batch = []
-       async for doc in cursor:
-           batch.append(doc)
-           if len(batch) >= batch_size:
-               yield batch
-               batch = []
-       if batch:
-           yield batch
-   
-   async def get_similar_conversations(
-       self,
-       query_text: str,
-       limit: int = 5,
-       min_score: float = 0.7
-   ) -> List[Dict[str, Any]]:
-       """Find similar conversations for RAG context"""
-       results = await self.vector_search(
-           "conversations",
-           query_text,
-           top_k=limit,
-           embedding_field="bot_response_embedding"
-       )
-       
-       # Filter by minimum score
-       filtered_results = [
-           r for r in results 
-           if r.get("score", 0) >= min_score
-       ]
-       
-       return filtered_results
-   
-   async def close(self):
-       """Close connections"""
-       await self.connector.close_connection()
+            async for doc in collection.aggregate(pipeline):
+                if "_id" in doc:
+                    doc["id"] = str(doc["_id"])
+                    del doc["_id"]
+                results.append(doc)
+            
+            if results:
+                logger.info(f"Atlas vector search returned {len(results)} results")
+                return results
+        
+        except Exception as atlas_error:
+            logger.warning(f"Atlas vector search failed, using fallback: {atlas_error}")
+            # Fallback to manual cosine similarity
+            return await self._manual_vector_search(
+                collection, query_embedding, top_k, embedding_field, filter_query
+            )
+    
+    async def _manual_vector_search(
+        self,
+        collection: AsyncIOMotorCollection,
+        query_embedding: List[float],
+        top_k: int,
+        embedding_field: str,
+        filter_query: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Manual cosine similarity search for non-Atlas environments"""
+        try:
+            # Build query
+            search_query = {embedding_field: {"$exists": True}}
+            if filter_query:
+                search_query.update(filter_query)
+            
+            # Fetch documents with embeddings
+            docs = []
+            async for doc in collection.find(search_query):
+                docs.append(doc)
+            
+            # Compute similarities
+            similarities = []
+            query_emb = np.array(query_embedding)
+            
+            for doc in docs:
+                try:
+                    doc_emb = np.array(doc[embedding_field])
+                    similarity = np.dot(doc_emb, query_emb) / (
+                        np.linalg.norm(doc_emb) * np.linalg.norm(query_emb)
+                    )
+                    
+                    # Convert ObjectId to string
+                    if "_id" in doc:
+                        doc["id"] = str(doc["_id"])
+                        del doc["_id"]
+                    
+                    similarities.append({
+                        "document": doc,
+                        "score": float(similarity)
+                    })
+                except Exception as e:
+                    logger.warning(f"Error computing similarity for document: {e}")
+                    continue
+            
+            # Sort by similarity and return top k
+            similarities.sort(key=lambda x: x["score"], reverse=True)
+            results = similarities[:top_k]
+            
+            logger.info(f"Manual vector search returned {len(results)} results")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in manual vector search: {e}")
+            raise
+    
+    async def update_embedding(
+        self,
+        collection_name: str,
+        doc_id: str,
+        text: str,
+        embedding_field: str = "embedding"
+    ) -> int:
+        """Update embedding for existing document"""
+        embeddings = await self.generate_embeddings([text])
+        
+        result = await self.connector.update_document(
+            collection_name,
+            {"_id": ObjectId(doc_id)},
+            {"$set": {embedding_field: embeddings[0]}}
+        )
+        
+        logger.info(f"Updated embedding for document {doc_id}")
+        return result
+    
+    async def bulk_generate_embeddings(
+        self,
+        collection_name: str,
+        text_field: str,
+        embedding_field: str = "embedding",
+        batch_size: int = 100
+    ):
+        """Generate embeddings for all documents in collection that don't have them"""
+        collection = await self.connector.get_collection(collection_name)
+        
+        # Find documents without embeddings
+        query = {
+            text_field: {"$exists": True, "$ne": ""},
+            embedding_field: {"$exists": False}
+        }
+        
+        total_processed = 0
+        async for doc_batch in self._batch_cursor(collection.find(query), batch_size):
+            texts = [doc[text_field] for doc in doc_batch if doc.get(text_field)]
+            if not texts:
+                continue
+            
+            # Generate embeddings
+            embeddings = await self.generate_embeddings(texts)
+            
+            # Update documents
+            for doc, embedding in zip(doc_batch, embeddings):
+                await collection.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {embedding_field: embedding}}
+                )
+            
+            total_processed += len(doc_batch)
+            logger.info(f"Processed {total_processed} documents for embeddings")
+    
+    async def _batch_cursor(self, cursor, batch_size: int):
+        """Helper to batch cursor results"""
+        batch = []
+        async for doc in cursor:
+            batch.append(doc)
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+    
+    async def get_similar_conversations(
+        self,
+        query_text: str,
+        limit: int = 5,
+        min_score: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """Find similar conversations for RAG context"""
+        results = await self.vector_search(
+            "conversations",
+            query_text,
+            top_k=limit,
+            embedding_field="bot_response_embedding"
+        )
+        
+        # Filter by minimum score
+        filtered_results = [
+            r for r in results 
+            if r.get("score", 0) >= min_score
+        ]
+        
+        return filtered_results
+    
+    async def close(self):
+        """Close connections"""
+        await self.connector.close_connection()
 
 # Global vector index instance
 vector_index = AsyncVectorIndex()

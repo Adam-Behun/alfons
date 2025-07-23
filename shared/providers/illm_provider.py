@@ -128,3 +128,9 @@ You are Alfons, a professional healthcare prior authorization specialist.
             healthcare_context += f"\n# Current Context:\n{context_str}\n"
         
         return f"{healthcare_context}\n\n{base_prompt}"
+
+from langchain_openai import ChatOpenAI
+from shared.config import config
+
+def get_llm(model: str = "gpt-4", **kwargs):
+    return ChatOpenAI(api_key=config.OPENAI_API_KEY, model=model, **kwargs)

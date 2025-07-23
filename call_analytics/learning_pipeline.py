@@ -9,8 +9,8 @@ from shared.config import config
 from shared.providers.illm_provider import get_llm
 from langchain_core.messages import HumanMessage
 
-from ..database.mongo_connector import MongoConnector
-from ..database.vector_index import VectorIndex
+from .mongo_connector import AsyncMongoConnector
+from .vector_index import AsyncVectorIndex
 
 logger = logging.getLogger(__name__)
 

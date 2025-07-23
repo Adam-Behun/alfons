@@ -4,14 +4,16 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
+import aiofiles
+import aiofiles.os
 import requests
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
 from shared.config import config
 from shared.logging import get_logger
-from ..database.mongo_connector import MongoConnector
-from ..queues.task_queue import process_call
+from .mongo_connector import AsyncMongoConnector
+from .task_queue import process_call
 
 logger = get_logger(__name__)
 
@@ -24,14 +26,11 @@ class InputHandler:
     def __init__(self, upload_dir: str = config.UPLOAD_DIR):
         self.upload_dir = upload_dir
         os.makedirs(self.upload_dir, exist_ok=True)
-        self.connector = MongoConnector()
-
-        # Twilio client
+        self.connector = AsyncMongoConnector()
         self.twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
-
         logger.info("InputHandler initialized")
 
-    def process_twilio_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_twilio_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process Twilio webhook: store, download recording if completed, queue processing.
 
@@ -50,7 +49,7 @@ class InputHandler:
                 'data': webhook_data,
                 'received_at': datetime.utcnow().isoformat()
             }
-            webhook_id = self.connector.insert_document("twilio_webhooks", webhook_doc)
+            webhook_id = await self.connector.insert_document("twilio_webhooks", webhook_doc)
 
             if call_status == 'completed':
                 # Fetch details, download recording
@@ -130,7 +129,7 @@ class InputHandler:
             'metadata': webhook_data
         }
 
-    def upload_historical_file(self, file_path: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+    async def upload_historical_file(self, file_path: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Upload .mp3, store metadata, queue processing.
 
@@ -141,46 +140,54 @@ class InputHandler:
         if not file_path.lower().endswith('.mp3'):
             raise ValueError("Only .mp3 supported")
 
+        dest_path = None
         try:
             unique_filename = f"{uuid.uuid4()}.mp3"
             dest_path = os.path.join(self.upload_dir, unique_filename)
-            with open(file_path, 'rb') as src, open(dest_path, 'wb') as dst:
-                dst.write(src.read())
+            
+            async with aiofiles.open(file_path, 'rb') as src:
+                content = await src.read()
+            async with aiofiles.open(dest_path, 'wb') as dst:
+                await dst.write(content)
 
             file_meta = {
                 'upload_date': datetime.utcnow().isoformat(),
                 'file_path': dest_path,
-                'original_name': Path(file_path).name,
+                'original_name': metadata.get('original_name', Path(file_path).name),
+                'processed': False,
+                'outcome': metadata.get('outcome', 'pending'),
                 'metadata': metadata or {},
                 'status': 'uploaded'
             }
             if metadata and 'patient_name' in metadata:
-                file_meta['metadata']['patient_name'] = 'REDACTED'  # Simple anonymize
+                file_meta['metadata']['patient_name'] = 'REDACTED'  # HIPAA-compliant anonymization
 
-            file_id = self.connector.insert_document("historical_uploads", file_meta)
+            file_id = await self.connector.insert_document("historical_uploads", file_meta)
 
             call_data = {'call_id': file_id, 'audio_path': dest_path, 'metadata': file_meta}
             task = process_call.delay(call_data)
-            self.connector.update_document("historical_uploads", {"_id": file_id}, {"$set": {"task_id": task.id, "status": "queued"}})
+            await self.connector.update_document("historical_uploads", {"_id": file_id}, {"$set": {"task_id": task.id, "status": "queued"}})
 
             logger.info(f"Uploaded {file_id}")
             return file_id
 
         except Exception as e:
             logger.error(f"Upload error: {e}")
+            if dest_path and await aiofiles.os.path.exists(dest_path):
+                await aiofiles.os.unlink(dest_path)
             raise
 
-    def get_status(self, file_id: str) -> Dict[str, Any]:
+    async def get_status(self, file_id: str) -> Dict[str, Any]:
         """
         Get upload/processing status.
 
         :param file_id: ID.
         :return: Status dict.
         """
-        doc = self.connector.find_documents("historical_uploads", {"_id": file_id}, limit=1)
+        doc = await self.connector.find_documents("historical_uploads", {"_id": file_id}, limit=1)
         return doc[0] if doc else {}
 
-    def cleanup_old_files(self, days_old: int = 30) -> int:
+    async def cleanup_old_files(self, days_old: int = 30) -> int:
         """
         Cleanup old files.
 
@@ -192,6 +199,6 @@ class InputHandler:
         for file in os.listdir(self.upload_dir):
             path = os.path.join(self.upload_dir, file)
             if os.path.isfile(path) and os.path.getctime(path) < cutoff:
-                os.remove(path)
+                await aiofiles.os.unlink(path)
                 count += 1
         return count

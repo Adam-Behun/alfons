@@ -4,18 +4,12 @@
  */
 
 import { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { BarChart3, Phone, Users, Activity } from 'lucide-react';
 import EHRInterface from '@/components/EHRInterface';
 import VoiceAgentWindow from '@/components/VoiceAgentWindow';
 import CallAnalytics from '@/components/CallAnalytics';
-
-// Initialize Supabase client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 type ViewMode = 'dashboard' | 'analytics';
 

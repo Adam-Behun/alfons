@@ -1,13 +1,26 @@
 // Call Analytics Component
-// Allows uploading historical calls and viewing analytics data
+// Allows uploading historical calls and viewing analytics data, including LLM thoughts
 
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, BarChart3, Zap, FileAudio, Loader2, RefreshCw, TrendingUp, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { Upload, BarChart3, Zap, FileAudio, Loader2, RefreshCw, TrendingUp, CheckCircle, Clock, XCircle, Brain } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
+
+interface ConversationLog {
+  id: string;
+  call_sid: string;
+  user_input: string;
+  bot_thoughts: string;
+  bot_response: string;
+  patient_id?: string;
+  procedure_code?: string;
+  insurance?: string;
+  escalated: boolean;
+  timestamp: string;
+}
 
 interface UploadedFile {
   _id: string;
@@ -15,11 +28,12 @@ interface UploadedFile {
   processed: boolean;
   outcome?: string;
   upload_date: string;
+  thoughts?: string[]; // Added for LLM thoughts
 }
 
 interface AnalyticsData {
   uploads: UploadedFile[];
-  analytics: any[];
+  analytics: ConversationLog[];
   summary: {
     total_uploads: number;
     processed_count: number;
@@ -42,7 +56,7 @@ interface PatternsData {
 }
 
 export default function CallAnalytics() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'analytics' | 'patterns'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'analytics' | 'patterns' | 'thoughts'>('upload');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
@@ -52,10 +66,39 @@ export default function CallAnalytics() {
   const fetchAnalyticsData = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/analytics-data`);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/logs`);
       if (response.ok) {
-        const data = await response.json();
-        setAnalyticsData(data);
+        const logs: ConversationLog[] = await response.json();
+        // Derive analytics-like structure from logs
+        const uploads = logs.reduce((acc: UploadedFile[], log) => {
+          if (!acc.some(u => u._id === log.call_sid)) {
+            acc.push({
+              _id: log.call_sid,
+              original_name: `call_${log.call_sid}.mp3`, // Placeholder; assumes call_sid-based naming
+              processed: !!log.bot_response, // Processed if response exists
+              outcome: log.escalated ? 'denied' : (log.bot_response?.toLowerCase().includes('approved') ? 'approved' : 'pending'),
+              upload_date: log.timestamp,
+              thoughts: [log.bot_thoughts].filter(Boolean),
+            });
+          } else {
+            const existing = acc.find(u => u._id === log.call_sid);
+            if (existing && log.bot_thoughts) {
+              existing.thoughts = [...(existing.thoughts || []), log.bot_thoughts];
+            }
+          }
+          return acc;
+        }, []);
+        const processed_count = uploads.filter(u => u.processed).length;
+        const success_rate = processed_count ? uploads.filter(u => u.outcome === 'approved').length / processed_count : 0;
+        setAnalyticsData({
+          uploads,
+          analytics: logs,
+          summary: {
+            total_uploads: uploads.length,
+            processed_count,
+            success_rate,
+          },
+        });
       }
     } catch (error) {
       console.error('Error fetching analytics data:', error);
@@ -67,6 +110,7 @@ export default function CallAnalytics() {
   const fetchPatternsData = async () => {
     setIsLoading(true);
     try {
+      // TODO: Implement /call-patterns endpoint in main.py
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/call-patterns`);
       if (response.ok) {
         const data = await response.json();
@@ -93,11 +137,9 @@ export default function CallAnalytics() {
 
     const formData = new FormData();
     formData.append('file', file);
-    
     const metadata = {
-      participants: 'rep, insurance',
-      outcome: 'pending',
-      date: new Date().toISOString().split('T')[0]
+      original_name: file.name,
+      upload_date: new Date().toISOString(),
     };
     formData.append('metadata', JSON.stringify(metadata));
 
@@ -115,7 +157,7 @@ export default function CallAnalytics() {
         }
       } else {
         const error = await response.json();
-        setUploadStatus(`Upload failed: ${error.detail}`);
+        setUploadStatus(`Upload failed: ${error.error || error.detail}`);
       }
     } catch (error) {
       setUploadStatus('Upload failed: Network error');
@@ -126,7 +168,7 @@ export default function CallAnalytics() {
   };
 
   useEffect(() => {
-    if (activeTab === 'analytics') {
+    if (activeTab === 'analytics' || activeTab === 'thoughts') {
       fetchAnalyticsData();
     } else if (activeTab === 'patterns') {
       fetchPatternsData();
@@ -134,7 +176,7 @@ export default function CallAnalytics() {
   }, [activeTab]);
 
   const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
+    switch (status?.toLowerCase()) {
       case 'success':
       case 'approved':
         return <CheckCircle className="w-4 h-4 text-green-600" />;
@@ -151,7 +193,7 @@ export default function CallAnalytics() {
   return (
     <div className="space-y-6">
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="upload" className="gap-2">
             <Upload className="w-4 h-4" />
             Upload
@@ -163,6 +205,10 @@ export default function CallAnalytics() {
           <TabsTrigger value="patterns" className="gap-2">
             <Zap className="w-4 h-4" />
             Patterns
+          </TabsTrigger>
+          <TabsTrigger value="thoughts" className="gap-2">
+            <Brain className="w-4 h-4" />
+            Thoughts
           </TabsTrigger>
         </TabsList>
 
@@ -302,8 +348,8 @@ export default function CallAnalytics() {
                 <CardContent>
                   {analyticsData.uploads.length > 0 ? (
                     <div className="space-y-3">
-                      {analyticsData.uploads.map((upload, index) => (
-                        <div key={upload._id || index} className="flex items-center justify-between p-4 border rounded-lg">
+                      {analyticsData.uploads.map((upload) => (
+                        <div key={upload._id} className="flex items-center justify-between p-4 border rounded-lg">
                           <div className="flex items-center space-x-3">
                             <FileAudio className="w-4 h-4 text-muted-foreground" />
                             <div>
@@ -338,6 +384,93 @@ export default function CallAnalytics() {
                 </CardContent>
               </Card>
             </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="thoughts" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold">LLM Thoughts Analysis</h2>
+            <Button 
+              onClick={fetchAnalyticsData} 
+              disabled={isLoading}
+              variant="outline"
+              className="gap-2"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Refresh
+            </Button>
+          </div>
+
+          {analyticsData && analyticsData.uploads.some(u => u.thoughts?.length) ? (
+            <div className="space-y-6">
+              {/* Summary */}
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                      <Brain className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <div>
+                      <p className="text-lg font-semibold">
+                        Found <span className="text-primary">{analyticsData.uploads.reduce((sum, u) => sum + (u.thoughts?.length || 0), 0)}</span> thought patterns 
+                        across <span className="text-primary">{analyticsData.uploads.filter(u => u.thoughts?.length).length}</span> calls
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Thoughts List */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recent Thoughts</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {analyticsData.uploads.map(upload => (
+                      upload.thoughts?.map((thought, index) => (
+                        <div key={`${upload._id}-${index}`} className="p-3 border rounded-lg bg-muted/30">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <p className="font-medium italic">{thought}</p>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                Call: {upload.original_name} ({formatDate(upload.upload_date)})
+                              </p>
+                            </div>
+                            {upload.outcome && (
+                              <Badge variant={upload.outcome === 'approved' ? 'approved' : upload.outcome === 'denied' ? 'denied' : 'pending'}>
+                                {upload.outcome}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )).filter(Boolean).flat().slice(0, 10)}
+                    {analyticsData.uploads.reduce((sum, u) => sum + (u.thoughts?.length || 0), 0) > 10 && (
+                      <p className="text-center text-sm text-muted-foreground py-2">
+                        ... and {analyticsData.uploads.reduce((sum, u) => sum + (u.thoughts?.length || 0), 0) - 10} more thoughts
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="pt-6 text-center py-12">
+                <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center mx-auto mb-4">
+                  <Brain className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <h3 className="font-semibold mb-2">No Thoughts Found</h3>
+                <p className="text-muted-foreground text-sm">
+                  Upload and process some call recordings to see LLM thought patterns.
+                </p>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 

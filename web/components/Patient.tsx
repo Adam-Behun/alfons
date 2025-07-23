@@ -1,15 +1,15 @@
 // Patient Component - Shows detailed patient information
-// Displays all patient data fetched from the database
+// Displays all patient data fetched from the MongoDB-backed API
 
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, User, Calendar, Shield, FileText, Phone, Building, Loader2 } from 'lucide-react';
 import { cn, getStatusColor } from '@/lib/utils';
 
 interface PatientDetails {
-  id: number;
+  id: string;
   patient_name: string;
   date_of_birth: string;
   sex?: string;
@@ -38,7 +38,7 @@ interface PatientDetails {
 }
 
 interface PatientProps {
-  patientId: number;
+  patientId: string;
   onBack: () => void;
 }
 
@@ -69,17 +69,25 @@ export default function Patient({ patientId, onBack }: PatientProps) {
   };
 
   const triggerCall = async () => {
+    if (!patient?.insurance_phone_number) {
+      alert('No insurance phone number available');
+      return;
+    }
     setCalling(true);
     
     const formData = new FormData();
-    formData.append('phone_number', '516-566-7132');
+    formData.append('phone_number', patient.insurance_phone_number);
+    formData.append('context', JSON.stringify({ patient_id: patientId }));
     
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/trigger-call`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/s2s/trigger-call`, {
         method: 'POST',
         body: formData,
       });
-      alert(`Alfons is calling for ${patient?.patient_name}'s prior authorization`);
+      if (!response.ok) {
+        throw new Error('Failed to trigger call');
+      }
+      alert(`Alfons is calling for ${patient.patient_name}'s prior authorization`);
     } catch (err) {
       alert('Failed to trigger call');
     } finally {
@@ -168,7 +176,7 @@ export default function Patient({ patientId, onBack }: PatientProps) {
         <div className="p-6 border-b bg-gradient-to-r from-emerald-50 to-green-50">
           <Button
             onClick={triggerCall}
-            disabled={calling}
+            disabled={calling || !patient.insurance_phone_number}
             size="lg"
             className="gap-2"
           >

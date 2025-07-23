@@ -4,13 +4,13 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge' ;
 import { User, Calendar, Shield, FileText, Phone, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Patient from './Patient';
 
 interface PatientRecord {
-  id: number;
+  id: string;
   patient_name: string;
   date_of_birth: string;
   insurance_company_name: string;
@@ -25,10 +25,8 @@ export default function EHRInterface() {
   const [patients, setPatients] = useState<PatientRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [callingPatient, setCallingPatient] = useState<number | null>(null);
-  const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
-
-  const DEMO_PHONE = "516-566-7132";
+  const [callingPatient, setCallingPatient] = useState<string | null>(null);
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
 
   const fetchPatients = async () => {
     try {
@@ -53,25 +51,34 @@ export default function EHRInterface() {
   }, []);
 
   const triggerCall = async (patient: PatientRecord) => {
+    if (!patient.insurance_phone_number) {
+      alert('No insurance phone number available for this patient');
+      return;
+    }
     setCallingPatient(patient.id);
     
     const formData = new FormData();
-    formData.append('phone_number', DEMO_PHONE);
+    formData.append('phone_number', patient.insurance_phone_number);
+    formData.append('context', JSON.stringify({ patient_id: patient.id }));
     
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/trigger-call`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/s2s/trigger-call`, {
         method: 'POST',
         body: formData,
       });
+      if (!response.ok) {
+        throw new Error('Failed to trigger call');
+      }
       alert(`Alfons is calling for ${patient.patient_name}'s prior authorization`);
     } catch (err) {
+      console.error('Error triggering call:', err);
       alert('Failed to trigger call');
     } finally {
       setCallingPatient(null);
     }
   };
 
-  const handlePatientClick = (patientId: number) => {
+  const handlePatientClick = (patientId: string) => {
     setSelectedPatientId(patientId);
   };
 
@@ -218,7 +225,7 @@ export default function EHRInterface() {
                           e.stopPropagation();
                           triggerCall(patient);
                         }}
-                        disabled={callingPatient === patient.id}
+                        disabled={callingPatient === patient.id || !patient.insurance_phone_number}
                         className="gap-2"
                       >
                         {callingPatient === patient.id ? (

@@ -5,7 +5,7 @@ from celery import Celery
 from datetime import datetime
 
 from shared.logging import get_logger
-from shared.providers.istt_provider import get_stt_provider  # For transcription
+from shared.providers.istt_provider import get_stt_provider
 
 logger = get_logger(__name__)
 
@@ -21,7 +21,8 @@ app.conf.update(
     task_track_started=True,
     task_time_limit=1800,  # 30 min max
     worker_prefetch_multiplier=1,
-    task_acks_late=True
+    task_acks_late=True,
+    broker_connection_retry_on_startup=True
 )
 
 @app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60})

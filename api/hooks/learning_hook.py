@@ -13,11 +13,13 @@ from pydantic import BaseModel
 
 # Import task queue for async processing
 try:
-    from call_analytics.queues.task_queue import process_call
+    from call_analytics.task_queue import process_call
 except ImportError:
     # Fallback if task queue not available yet
     process_call = None
     logging.warning("Task queue not available - calls will not be processed asynchronously")
+
+from call_analytics.mongo_connector import AsyncMongoConnector
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,7 @@ class LearningData(BaseModel):
     metrics: Dict[str, Any] = {}
     escalation: Dict[str, Any] = {}
     raw_payload: Dict[str, Any] = {}
+    thoughts: list[str] = []  # Aggregated bot thoughts for learning/auditing
 
 def anonymize_entities(entities: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -79,7 +82,8 @@ def extract_call_metrics(payload: CallEndPayload) -> Dict[str, Any]:
 def prepare_learning_data(
     payload: CallEndPayload,
     conversation_entities: Optional[Dict[str, Any]] = None,
-    escalation_data: Optional[Dict[str, Any]] = None
+    escalation_data: Optional[Dict[str, Any]] = None,
+    thoughts_data: Optional[list[str]] = None
 ) -> LearningData:
     """
     Prepare structured data for the learning pipeline.
@@ -107,7 +111,8 @@ def prepare_learning_data(
         entities=anonymized_entities,
         metrics=metrics,
         escalation=escalation_info,
-        raw_payload=payload.dict()
+        raw_payload=payload.dict(),
+        thoughts=thoughts_data or []
     )
 
 async def queue_call_for_processing(learning_data: LearningData) -> bool:
@@ -141,11 +146,26 @@ async def handle_call_completion(
     logger.info(f"Processing call completion for CallSid: {payload.CallSid}")
     
     try:
+        # Fetch conversation data if not provided
+        if conversation_entities is None or escalation_data is None:
+            conv_data = await get_conversation_data(payload.CallSid)
+            if conv_data:
+                conversation_entities = conv_data.get("entities", {})
+                escalation_data = conv_data.get("escalation", {})
+                thoughts_data = conv_data.get("thoughts", [])
+            else:
+                conversation_entities = {}
+                escalation_data = {}
+                thoughts_data = []
+        else:
+            thoughts_data = []  # If provided externally, assume no thoughts or handle separately
+
         # Prepare learning data
         learning_data = prepare_learning_data(
             payload, 
             conversation_entities, 
-            escalation_data
+            escalation_data,
+            thoughts_data
         )
         
         # Queue for async processing
@@ -175,18 +195,20 @@ async def get_conversation_data(call_sid: str) -> Optional[Dict[str, Any]]:
     This should be called before queuing to get the full conversation context.
     """
     try:
-        # This would integrate with your existing database.py
-        # to retrieve conversation logs and extracted entities
-        from .database import supabase
+        mongo = AsyncMongoConnector()
+        await mongo.connect()
+        collection = await mongo.get_collection("logs")
+        cursor = collection.find({"call_sid": call_sid}).sort("timestamp", 1)
+        logs = await cursor.to_list(length=100)
+        await mongo.close_connection()
         
-        response = supabase.table("conversations").select("*").eq("call_sid", call_sid).execute()
-        
-        if response.data:
+        if logs:
             # Aggregate all conversation data for this call
             entities = {}
             escalation_data = {"triggered": False}
+            thoughts = []
             
-            for log in response.data:
+            for log in logs:
                 # Merge entities from all conversation turns
                 if log.get("patient_id"):
                     entities["patient_id"] = log["patient_id"]
@@ -199,10 +221,15 @@ async def get_conversation_data(call_sid: str) -> Optional[Dict[str, Any]]:
                 if log.get("escalated"):
                     escalation_data["triggered"] = True
                     escalation_data["reason"] = log.get("bot_response", "")
+                
+                # Aggregate thoughts
+                if log.get("bot_thoughts"):
+                    thoughts.append(log["bot_thoughts"])
             
             return {
                 "entities": entities,
-                "escalation": escalation_data
+                "escalation": escalation_data,
+                "thoughts": thoughts
             }
             
     except Exception as e:
