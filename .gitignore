@@ -12,3 +12,5 @@ static/
 tasks.md
 new_tasks.md
 dump.rdb
+codebase_explained.md
+print_tree.py
