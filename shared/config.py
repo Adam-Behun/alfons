@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         default="mongodb://localhost:27017",
         env="MONGO_URI"
     )
-    MONGO_DB_NAME: str = Field(default="alfons_db", env="MONGO_DB_NAME")
+    MONGO_DB_NAME: str = Field(default="alfons", env="MONGO_DB_NAME")
     
     # === Redis Configuration ===
     REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")

@@ -6,12 +6,15 @@ from typing import List, Dict, Any, Optional, AsyncIterable
 from dataclasses import dataclass, asdict
 from enum import Enum
 import base64
+import audioop
+from datetime import datetime
 
 from openai import AsyncOpenAI
 import redis.asyncio as redis
 
 from shared.config import config
 from shared.logging import get_logger
+from .conversation import get_conversation_manager
 
 logger = get_logger(__name__)
 
@@ -44,7 +47,7 @@ class S2SPipeline:
     Manages sessions in-memory; basic state/RAG placeholders.
     """
 
-    def __init__(self, model: str = "gpt-4o-realtime-preview-2025-06-03", voice: str = "alloy", enable_rag: bool = True):
+    def __init__(self, model: str = "gpt-4o-realtime-preview-2024-10-01", voice: str = "alloy", enable_rag: bool = True):
         if not config.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY required")
 
@@ -73,7 +76,8 @@ class S2SPipeline:
             "output_audio_format": "pcm16",
             "turn_detection": {"type": "server_vad", "threshold": 0.5},
             "temperature": 0.7,
-            "max_response_output_tokens": 150
+            "max_response_output_tokens": 150,
+            "input_audio_transcription": {"model": "whisper-1"}
         }
 
         realtime_session = await self.client.beta.realtime.create(session_config)  # Pseudo-code; adapt to actual SDK
@@ -97,8 +101,9 @@ class S2SPipeline:
         realtime = session["realtime_session"]
         memory = session["memory"]
 
-        # Convert mulaw to pcm16
-        pcm_audio = self._mulaw_to_pcm16(audio_data)
+        # Convert mulaw to pcm16 at 8kHz, then resample to 24kHz
+        pcm_audio = audioop.ulaw2lin(audio_data, 2)
+        pcm_audio, _ = audioop.ratecv(pcm_audio, 2, 1, 8000, 24000, None)
 
         # Append audio
         await realtime.input_audio_buffer.append(pcm_audio)
@@ -107,22 +112,43 @@ class S2SPipeline:
         if self.enable_rag:
             transcript = await self._get_partial_transcript(realtime)
             if transcript:
+                redis_client = await redis.from_url(config.REDIS_URL)
+                await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "chunk", "role": "user", "chunk": transcript}))
+                await redis_client.close()
+
                 rag_context = await self._retrieve_rag(transcript, memory.current_state)
                 if rag_context:
                     await realtime.update_instructions(f"Use context: {rag_context}")  # Pseudo
 
         # Generate and yield response
+        partial_response_transcript = ""
         async for response in realtime.generate_response():
             if response.audio:
-                mulaw_chunk = self._pcm16_to_mulaw(response.audio)
+                pcm_chunk = response.audio
+                pcm_chunk, _ = audioop.ratecv(pcm_chunk, 2, 1, 24000, 8000, None)
+                mulaw_chunk = audioop.lin2ulaw(pcm_chunk, 2)
                 yield mulaw_chunk
 
             # Update state/memory from response
             if response.transcript:
-                memory.history.append(response.transcript)
-                memory.current_state = self._update_state(memory, response.transcript)
+                partial_response_transcript += response.transcript
+                redis_client = await redis.from_url(config.REDIS_URL)
+                await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "chunk", "role": "assistant", "chunk": response.transcript}))
+                await redis_client.close()
 
-async def end_call_session(self, call_id: str) -> Dict[str, Any]:
+        # After response complete
+        if partial_response_transcript:
+            redis_client = await redis.from_url(config.REDIS_URL)
+            bot_thoughts = await self._get_thoughts(transcript, partial_response_transcript)
+            conv_manager = get_conversation_manager()
+            extracted = await conv_manager._extract_data(partial_response_transcript, None)
+            await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "complete", "role": "assistant", "thoughts": bot_thoughts, "content": partial_response_transcript, "extracted": extracted, "timestamp": datetime.utcnow().isoformat()}))
+            await redis_client.close()
+
+            memory.history.append(partial_response_transcript)
+            memory.current_state = self._update_state(memory, partial_response_transcript)
+
+    async def end_call_session(self, call_id: str) -> Dict[str, Any]:
         """
         End session.
 
@@ -177,6 +203,15 @@ async def end_call_session(self, call_id: str) -> Dict[str, Any]:
             return CallState.OBJECTION_HANDLING
         # Add more logic
         return memory.current_state
+
+    async def _get_thoughts(self, message: str, response: str) -> str:
+        """Generate thoughts based on message and response."""
+        prompt = f"Think step by step about the prior auth task:\nUser message: {message}\nBot response: {response}\nOutput the detailed reasoning thoughts."
+        resp = await self.client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": prompt}]
+        )
+        return resp.choices[0].message.content
 
 def create_s2s_pipeline(enable_rag: bool = True) -> S2SPipeline:
     return S2SPipeline(enable_rag=enable_rag)

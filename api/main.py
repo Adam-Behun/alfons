@@ -6,6 +6,8 @@ import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
 import tempfile
+import redis.asyncio as redis
+from bson import ObjectId
 
 from fastapi import FastAPI, Request, Form, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,7 +65,7 @@ async def get_mongo() -> AsyncMongoConnector:
     mongo = AsyncMongoConnector()
     await mongo.connect()
     yield mongo
-    mongo.close_connection()
+    await mongo.close_connection()
 
 async def get_input_handler() -> InputHandler:
     return InputHandler()
@@ -74,7 +76,7 @@ async def startup_event():
     logger.info("Starting Alfons API...")
 
     # Validate env
-    required = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER", "BASE_URL", "REDIS_URL", "MONGODB_URL"]
+    required = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER", "BASE_URL", "REDIS_URL", "MONGO_URI"]
     missing = [v for v in required if not os.getenv(v)]
     if missing:
         raise RuntimeError(f"Missing env: {missing}")
@@ -133,7 +135,7 @@ async def health_check():
 async def get_patient(patient_id: str, mongo: AsyncMongoConnector = Depends(get_mongo)):
     try:
         collection = await mongo.get_collection("patients")
-        patient = await collection.find_one({"_id": patient_id})
+        patient = await collection.find_one({"_id": ObjectId(patient_id)})
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
         patient["id"] = str(patient["_id"])
@@ -202,15 +204,46 @@ async def trigger_s2s_call(
     except Exception as e:
         raise HTTPException(500, str(e))
 
+@app.post("/voice/streaming")
+async def voice_streaming(CallSid: str = Form(...), telephony: EnhancedTelephonyService = Depends(get_telephony_service)):
+    twiml = telephony.generate_streaming_twiml(CallSid)
+    return Response(content=twiml, media_type="application/xml")
+
 @app.websocket("/ws/media-stream")
 async def media_stream_ws(websocket: WebSocket, telephony: EnhancedTelephonyService = Depends(get_telephony_service)):
     await websocket.accept()
+    logger.info("WebSocket connection accepted for media stream")
     try:
         await telephony.handle_stream_connection(websocket, websocket.url.path)
     except WebSocketDisconnect:
+        logger.info("WebSocket disconnected normally")
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+        await websocket.close(code=1011, reason=str(e))
+    finally:
+        logger.info("WebSocket connection cleanup complete")
+
+@app.websocket("/ws/transcript/{call_id}")
+async def transcript_ws(websocket: WebSocket, call_id: str):
+    await websocket.accept()
+    redis_client = await redis.from_url(os.getenv("REDIS_URL"))
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(f"transcript_{call_id}")
+    
+    try:
+        async for message in pubsub.listen():
+            if message.get("type") == "message":
+                data = message.get("data")
+                if data:
+                    await websocket.send_text(data.decode("utf-8"))
+    except WebSocketDisconnect:
         pass
     except Exception as e:
+        logger.error(f"Transcript WS error for {call_id}: {str(e)}")
         await websocket.close(code=1011, reason=str(e))
+    finally:
+        await pubsub.unsubscribe(f"transcript_{call_id}")
+        await redis_client.close()
 
 @app.post("/conversation/process")
 async def process_conversation(

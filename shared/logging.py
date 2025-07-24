@@ -43,7 +43,7 @@ class StructuredFormatter(logging.Formatter):
         return json.dumps(log_entry)
 
 def setup_logging(
-    level: str = "INFO",
+    level: str = "DEBUG",
     log_file: Optional[str] = None,
     enable_console: bool = True,
     structured: bool = True

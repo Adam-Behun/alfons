@@ -113,6 +113,12 @@ export default function ConversationTranscript({ callSid }: ConversationTranscri
   useEffect(() => {
     fetchInitialLogs();
 
+    if (!callSid) {
+      console.warn('No callSid provided; skipping WebSocket connection.');
+      setError('No active call SID available for transcript streaming.');
+      return;
+    }
+
     const apiUrl = new URL(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
     const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/transcript/${callSid}`;

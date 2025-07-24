@@ -7,6 +7,7 @@ python-multipart
 aiohttp==3.12.13
 aiohttp-retry==2.9.1
 aiohappyeyeballs==2.6.1
+aiofiles==24.1.0
 httpx==0.27.2
 requests==2.32.4
 
@@ -16,10 +17,7 @@ twilio==9.3.0
 # ElevenLabs
 elevenlabs==2.7.1
 
-# Supabase (legacy)
-supabase==2.9.0
-
-# MongoDB (new primary)
+# MongoDB
 motor==3.3.2
 pymongo==4.6.0
 

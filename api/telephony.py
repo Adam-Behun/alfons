@@ -3,11 +3,13 @@ import json
 import logging
 import base64
 from typing import Dict, Any, Optional
-import websockets
 from datetime import datetime
+import uuid
+import time
+import audioop
 
 from twilio.rest import Client
-from twilio.twiml.voice_response import VoiceResponse, Start, Stream
+from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 
 from .s2s_pipeline import S2SPipeline, create_s2s_pipeline
 from shared.config import config
@@ -82,12 +84,12 @@ class EnhancedTelephonyService:
         :return: TwiML string.
         """
         response = VoiceResponse()
-        response.say("Hello, this is Alfons. How can I assist with prior authorization?", voice="alice")
+        response.say("Hi, this is Alfons. Calling regarding a prior authorization for our patient", voice="alice")
 
-        start = Start()
+        connect = Connect()
         stream = Stream(url=f"wss://{self.base_url.replace('https://', '')}/ws/media-stream")
-        start.append(stream)
-        response.append(start)
+        connect.append(stream)
+        response.append(connect)
 
         return str(response)
 
@@ -102,7 +104,8 @@ class EnhancedTelephonyService:
         stream_id = str(uuid.uuid4())  # Simple ID
 
         try:
-            async for message in websocket:
+            while True:
+                message = await websocket.receive_text()
                 event = json.loads(message)
                 event_type = event.get("event")
 
@@ -118,7 +121,10 @@ class EnhancedTelephonyService:
                 elif event_type == "stop" and call_id:
                     await self.s2s_pipeline.end_call_session(call_id)
                     logger.info(f"Ended session for {call_id}")
+                    break  # Exit loop on stream stop
 
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected")
         except Exception as e:
             logger.error(f"Stream error: {e}")
         finally:
@@ -136,8 +142,12 @@ class EnhancedTelephonyService:
         payload = event.get("media", {}).get("payload")
         if payload:
             audio_data = base64.b64decode(payload)
-            async for response_audio in self.s2s_pipeline.process_audio_chunk(call_id, audio_data):
-                await self._send_response(websocket, event["streamSid"], response_audio)
+            pcm_audio = audioop.ulaw2lin(audio_data, 2)
+            pcm_audio, _ = audioop.ratecv(pcm_audio, 2, 1, 8000, 24000, None)
+            async for response_audio in self.s2s_pipeline.process_audio_chunk(call_id, pcm_audio):
+                pcm_chunk, _ = audioop.ratecv(response_audio, 2, 1, 24000, 8000, None)
+                mulaw_chunk = audioop.lin2ulaw(pcm_chunk, 2)
+                await self._send_response(websocket, event["streamSid"], mulaw_chunk)
 
     async def _send_response(self, websocket, stream_sid: str, audio_data: bytes):
         """
@@ -153,7 +163,7 @@ class EnhancedTelephonyService:
             "streamSid": stream_sid,
             "media": {"payload": payload}
         }
-        await websocket.send(json.dumps(media_event))
+        await websocket.send_text(json.dumps(media_event))
 
     async def get_service_health(self) -> Dict[str, Any]:
         """
