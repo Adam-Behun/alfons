@@ -140,15 +140,19 @@ class EnhancedTelephonyService:
         :param websocket: Connection.
         :param call_id: Call ID.
         """
-        payload = event.get("media", {}).get("payload")
-        if payload:
-            audio_data = base64.b64decode(payload)
-            pcm_audio = audioop.ulaw2lin(audio_data, 2)
-            pcm_audio, _ = audioop.ratecv(pcm_audio, 2, 1, 8000, 24000, None)
-            async for response_audio in self.s2s_pipeline.process_audio_chunk(call_id, pcm_audio):
-                pcm_chunk, _ = audioop.ratecv(response_audio, 2, 1, 24000, 8000, None)
-                mulaw_chunk = audioop.lin2ulaw(pcm_chunk, 2)
-                await self._send_response(websocket, event["streamSid"], mulaw_chunk)
+        try:
+            payload = event.get("media", {}).get("payload")
+            if payload:
+                # Decode the base64 mulaw audio
+                audio_data = base64.b64decode(payload)
+                
+                # Process through S2S pipeline
+                async for response_audio in self.s2s_pipeline.process_audio_chunk(call_id, audio_data):
+                    # Send response audio back to Twilio
+                    await self._send_response(websocket, event["streamSid"], response_audio)
+                    
+        except Exception as e:
+            logger.error(f"Error processing media for call {call_id}: {e}")
 
     async def _send_response(self, websocket, stream_sid: str, audio_data: bytes):
         """
