@@ -1,9 +1,13 @@
 import logging
+import asyncio
 from typing import Dict, Any, List, Optional
 import datetime
 import json
 import pandas as pd
 from sklearn.model_selection import train_test_split
+import nest_asyncio
+
+nest_asyncio.apply()
 
 from shared.config import config
 from shared.providers.illm_provider import get_llm
@@ -122,12 +126,13 @@ class MemoryManager:
     """
 
     def __init__(self):
-        self.connector = MongoConnector()
-        self.vector_index = VectorIndex()
+        self.connector = AsyncMongoConnector()
+        self.vector_index = AsyncVectorIndex()
         self.extractor = PatternExtractor()
         self.memory_types = ["short_term", "long_term", "episodic", "procedural", "conversational", "entity", "workflow"]
         for mtype in self.memory_types:
-            self.vector_index.create_vector_index(mtype, dimensions=384)
+            asyncio.run(self.vector_index.create_vector_index(mtype, dimensions=384))
+            logger.info(f"Created vector index for {mtype}")
         logger.info("MemoryManager initialized")
 
     def generate_memory(self, data: Dict[str, Any], memory_type: str) -> Dict[str, Any]:
@@ -227,7 +232,7 @@ class TrainingPipeline:
     """
 
     def __init__(self):
-        self.connector = MongoConnector()
+        self.connector = AsyncMongoConnector()
         self.extractor = PatternExtractor()
         self.generator = ScriptGenerator()
         logger.info("TrainingPipeline initialized")

@@ -8,6 +8,7 @@ import uuid
 import time
 import audioop
 
+from fastapi import WebSocketDisconnect
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 

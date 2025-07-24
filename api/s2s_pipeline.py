@@ -56,22 +56,22 @@ class S2SPipeline:
         self.voice = voice
         self.enable_rag = enable_rag
 
-        self.sessions: Dict[str, Dict[str, Any]] = {}  # call_id: {'memory': Memory, 'realtime_session': session}
+        self.sessions: Dict[str, Dict[str, Any]] = {}  # call_id: {'memory': Memory, 'realtime_session': connection, 'manager': manager}
 
         logger.info("S2SPipeline initialized")
 
     async def start_call_session(self, call_id: str) -> Dict[str, Any]:
         """
-        Start session.
-
+        Start session using OpenAI Realtime API via SDK.
+        
         :param call_id: ID.
         :return: Session info.
         """
         memory = ConversationMemory(call_id)
         session_config = {
-            "model": self.model,
-            "voice": self.voice,
+            "modalities": ["text", "audio"],
             "instructions": "You are Alfons, prior auth assistant. Be empathetic, professional.",
+            "voice": self.voice,
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
             "turn_detection": {"type": "server_vad", "threshold": 0.5},
@@ -80,16 +80,45 @@ class S2SPipeline:
             "input_audio_transcription": {"model": "whisper-1"}
         }
 
-        realtime_session = await self.client.beta.realtime.create(session_config)  # Pseudo-code; adapt to actual SDK
+        # Create the context manager and manually enter to get the connection
+        realtime_manager = self.client.beta.realtime.connect(model=self.model)
+        connection = await realtime_manager.__aenter__()
+        
+        # Update session configuration
+        await connection.session.update(session=session_config)
 
-        self.sessions[call_id] = {"memory": memory, "realtime_session": realtime_session, "start_time": time.time()}
+        self.sessions[call_id] = {
+            "memory": memory, 
+            "realtime_session": connection, 
+            "manager": realtime_manager, 
+            "start_time": time.time()
+        }
 
         return {"status": "initialized", "call_id": call_id}
+
+    async def speak(self, call_id: str, text: str):
+        """
+        Prompt OpenAI to speak a specific text verbatim.
+
+        :param call_id: ID.
+        :param text: Text to speak.
+        """
+        if call_id not in self.sessions:
+            raise ValueError("No session")
+
+        connection = self.sessions[call_id]["realtime_session"]
+        await connection.response.create(
+            response={
+                "modalities": ["text", "audio"],
+                "instructions": f"Say this verbatim:\n{text}"
+            }
+        )
+        logger.debug(f"Sent speak command for call_id: {call_id}, text: {text}")
 
     async def process_audio_chunk(self, call_id: str, audio_data: bytes) -> AsyncIterable[bytes]:
         """
         Process chunk: append, generate response.
-
+        
         :param call_id: ID.
         :param audio_data: Mulaw bytes.
         :yield: Response audio (mulaw).
@@ -98,19 +127,19 @@ class S2SPipeline:
             raise ValueError("No session")
 
         session = self.sessions[call_id]
-        realtime = session["realtime_session"]
+        connection = session["realtime_session"]
         memory = session["memory"]
 
         # Convert mulaw to pcm16 at 8kHz, then resample to 24kHz
         pcm_audio = audioop.ulaw2lin(audio_data, 2)
         pcm_audio, _ = audioop.ratecv(pcm_audio, 2, 1, 8000, 24000, None)
 
-        # Append audio
-        await realtime.input_audio_buffer.append(pcm_audio)
+        # Append audio to input buffer
+        await connection.input_audio_buffer.append(audio=pcm_audio)
 
-        # RAG if enabled (placeholder: fetch context)
+        # RAG if enabled
         if self.enable_rag:
-            transcript = await self._get_partial_transcript(realtime)
+            transcript = await self._get_partial_transcript(connection)
             if transcript:
                 redis_client = await redis.from_url(config.REDIS_URL)
                 await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "chunk", "role": "user", "chunk": transcript}))
@@ -118,35 +147,44 @@ class S2SPipeline:
 
                 rag_context = await self._retrieve_rag(transcript, memory.current_state)
                 if rag_context:
-                    await realtime.update_instructions(f"Use context: {rag_context}")  # Pseudo
+                    await connection.session.update(session={"instructions": f"Use context: {rag_context}"})
 
-        # Generate and yield response
+        # Create response
+        await connection.response.create()
+
+        # Handle response events asynchronously
         partial_response_transcript = ""
-        async for response in realtime.generate_response():
-            if response.audio:
-                pcm_chunk = response.audio
+        async for event in connection:
+            if event.type == 'response.audio.delta':
+                pcm_chunk = event.audio
                 pcm_chunk, _ = audioop.ratecv(pcm_chunk, 2, 1, 24000, 8000, None)
                 mulaw_chunk = audioop.lin2ulaw(pcm_chunk, 2)
                 yield mulaw_chunk
 
-            # Update state/memory from response
-            if response.transcript:
-                partial_response_transcript += response.transcript
+            elif event.type == 'response.audio_transcript.delta':
+                partial_response_transcript += event.transcript
                 redis_client = await redis.from_url(config.REDIS_URL)
-                await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "chunk", "role": "assistant", "chunk": response.transcript}))
+                await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "chunk", "role": "assistant", "chunk": event.transcript}))
                 await redis_client.close()
 
-        # After response complete
-        if partial_response_transcript:
-            redis_client = await redis.from_url(config.REDIS_URL)
-            bot_thoughts = await self._get_thoughts(transcript, partial_response_transcript)
-            conv_manager = get_conversation_manager()
-            extracted = await conv_manager._extract_data(partial_response_transcript, None)
-            await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "complete", "role": "assistant", "thoughts": bot_thoughts, "content": partial_response_transcript, "extracted": extracted, "timestamp": datetime.utcnow().isoformat()}))
-            await redis_client.close()
+            elif event.type == 'response.audio_transcript.done':
+                if partial_response_transcript:
+                    redis_client = await redis.from_url(config.REDIS_URL)
+                    bot_thoughts = await self._get_thoughts(transcript, partial_response_transcript)
+                    conv_manager = get_conversation_manager()
+                    extracted = await conv_manager._extract_data(partial_response_transcript, None)
+                    await redis_client.publish(f"transcript_{call_id}", json.dumps({"type": "complete", "role": "assistant", "thoughts": bot_thoughts, "content": partial_response_transcript, "extracted": extracted, "timestamp": datetime.utcnow().isoformat()}))
+                    await redis_client.close()
 
-            memory.history.append(partial_response_transcript)
-            memory.current_state = self._update_state(memory, partial_response_transcript)
+                    memory.history.append(partial_response_transcript)
+                    memory.current_state = self._update_state(memory, partial_response_transcript)
+
+            elif event.type == 'response.done':
+                break
+
+            elif event.type == 'error':
+                logger.error(f"Realtime error: {event.error.message}")
+                raise RuntimeError(event.error.message)
 
     async def end_call_session(self, call_id: str) -> Dict[str, Any]:
         """
@@ -159,7 +197,10 @@ class S2SPipeline:
             return {"status": "no_session"}
 
         session = self.sessions[call_id]
-        await session["realtime_session"].close()
+        manager = session["manager"]
+        
+        # Manually exit the context to close the connection
+        await manager.__aexit__(None, None, None)
 
         # Publish stop event to Redis for WebSocket clients
         redis_client = await redis.from_url(config.REDIS_URL)
@@ -183,7 +224,7 @@ class S2SPipeline:
 
     def _mulaw_to_pcm16(self, mulaw: bytes) -> bytes:
         """Convert mulaw to pcm16 (placeholder)."""
-        return mulaw  # Implement with audioop or similar
+        return mulaw
 
     def _pcm16_to_mulaw(self, pcm: bytes) -> bytes:
         """Convert pcm16 to mulaw (placeholder)."""
@@ -201,7 +242,6 @@ class S2SPipeline:
         """Update state based on transcript (simple logic)."""
         if "deny" in transcript.lower():
             return CallState.OBJECTION_HANDLING
-        # Add more logic
         return memory.current_state
 
     async def _get_thoughts(self, message: str, response: str) -> str:
