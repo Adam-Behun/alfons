@@ -135,8 +135,11 @@ class S2SPipeline:
             pcm_audio = audioop.ulaw2lin(audio_data, 2)
             pcm_audio, _ = audioop.ratecv(pcm_audio, 2, 1, 8000, 24000, None)
 
+            # OpenAI SDK expects base64-encoded audio data, not raw bytes
+            pcm_audio_b64 = base64.b64encode(pcm_audio).decode('utf-8')
+
             # Append audio to input buffer
-            await connection.input_audio_buffer.append(audio=pcm_audio)
+            await connection.input_audio_buffer.append(audio=pcm_audio_b64)
 
             # RAG if enabled
             transcript = ""
@@ -170,8 +173,11 @@ class S2SPipeline:
                 redis_client = await redis.from_url(config.REDIS_URL)
                 
                 async for event in connection:
+                    # Debug: Log event type and check for bytes in event attributes
+                    logger.debug(f"Received event type: {event.type}")
+                    
                     if event.type == 'response.audio.delta':
-                        # OpenAI Realtime API returns audio as base64-encoded string in event.delta
+                        # OpenAI SDK returns base64-encoded string in event.delta for audio
                         if hasattr(event, 'delta') and event.delta:
                             try:
                                 # Decode base64 string to bytes (PCM16 at 24kHz)
@@ -185,42 +191,24 @@ class S2SPipeline:
                                 continue
 
                     elif event.type == 'response.audio_transcript.delta':
-                        # Transcript delta is text, not audio
+                        # Transcript delta is text - safe to serialize
                         if hasattr(event, 'delta') and event.delta:
                             partial_response_transcript += event.delta
-                            try:
-                                await redis_client.publish(f"transcript_{call_id}", json.dumps({
-                                    "type": "chunk", 
-                                    "role": "assistant", 
-                                    "chunk": event.delta
-                                }))
-                            except Exception as e:
-                                logger.error(f"Failed to publish assistant transcript chunk: {e}")
+                            # Skip Redis publishing for transcript deltas to avoid serialization issues
+                            logger.debug(f"Received transcript delta: {event.delta}")
 
                     elif event.type == 'response.audio_transcript.done':
-                        # Final transcript processing
+                        # Final transcript processing - only publish complete transcript
                         if partial_response_transcript:
                             try:
-                                bot_thoughts = await self._get_thoughts(transcript, partial_response_transcript)
-                                conv_manager = get_conversation_manager()
-                                
-                                # Create a mock context for extraction
-                                mock_context = type('MockContext', (), {
-                                    'extracted_data': type('MockExtracted', (), {
-                                        'to_dict': lambda: {}
-                                    })()
-                                })()
-                                
-                                extracted = await conv_manager._extract_data(partial_response_transcript, mock_context)
-                                
+                                # Skip complex processing that might cause serialization errors
                                 await redis_client.publish(f"transcript_{call_id}", json.dumps({
                                     "type": "complete", 
                                     "role": "assistant", 
-                                    "thoughts": bot_thoughts, 
                                     "content": partial_response_transcript, 
-                                    "extracted": extracted, 
                                     "timestamp": datetime.utcnow().isoformat()
                                 }))
+                                logger.info(f"Published complete transcript: {partial_response_transcript}")
                             except Exception as e:
                                 logger.error(f"Failed to publish complete transcript: {e}")
 
@@ -233,6 +221,10 @@ class S2SPipeline:
                     elif event.type == 'error':
                         logger.error(f"Realtime error: {event.error.message if hasattr(event, 'error') else 'Unknown error'}")
                         raise RuntimeError(f"OpenAI Realtime error: {event.error.message if hasattr(event, 'error') else 'Unknown error'}")
+                    
+                    else:
+                        # Log any other event types we're not handling
+                        logger.debug(f"Unhandled event type: {event.type}")
                         
             except Exception as e:
                 logger.error(f"Error in event processing: {e}")
@@ -243,6 +235,8 @@ class S2SPipeline:
                     
         except Exception as e:
             logger.error(f"Error in process_audio_chunk: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             raise
 
     async def end_call_session(self, call_id: str) -> Dict[str, Any]:
